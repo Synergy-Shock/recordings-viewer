@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import Link from 'next/link'
 
 interface SessionFile {
@@ -22,6 +22,7 @@ interface Session {
   totalSize: number
 }
 
+
 function formatBytes(bytes: number): string {
   if (bytes === 0) return '0 B'
   const k = 1024
@@ -38,6 +39,209 @@ function formatDate(dateString: string): string {
     hour: '2-digit',
     minute: '2-digit',
   })
+}
+
+function getDateKey(dateString: string): string {
+  const date = new Date(dateString)
+  return date.toISOString().split('T')[0]
+}
+
+function isSessionComplete(session: Session): boolean {
+  return (
+    session.hasScreenVideo &&
+    session.hasScreenAudio &&
+    session.hasCameraVideo &&
+    session.hasAudioRaw &&
+    session.hasAudioClean
+  )
+}
+
+interface HourStats {
+  hour: number
+  label: string
+  count: number
+  complete: number
+  incomplete: number
+}
+
+function SessionsPerHourChart({ sessions }: { sessions: Session[] }) {
+  const [selectedDate, setSelectedDate] = useState(() => {
+    const today = new Date()
+    return getDateKey(today.toISOString())
+  })
+
+  // Get the earliest session date to limit navigation
+  const earliestDate = useMemo(() => {
+    if (sessions.length === 0) return selectedDate
+    const dates = sessions.map((s) => getDateKey(s.timestamp))
+    return dates.sort()[0]
+  }, [sessions, selectedDate])
+
+  const isToday = selectedDate === getDateKey(new Date().toISOString())
+  const canGoForward = !isToday
+  const canGoBack = selectedDate > earliestDate
+
+  const navigateDay = (direction: 'prev' | 'next') => {
+    const current = new Date(selectedDate)
+    current.setDate(current.getDate() + (direction === 'next' ? 1 : -1))
+    setSelectedDate(getDateKey(current.toISOString()))
+  }
+
+  const hourStats = useMemo(() => {
+    // Create 24 hour slots
+    const hours: HourStats[] = []
+    for (let h = 0; h < 24; h++) {
+      hours.push({
+        hour: h,
+        label: h.toString().padStart(2, '0'),
+        count: 0,
+        complete: 0,
+        incomplete: 0,
+      })
+    }
+
+    // Count sessions per hour for selected date
+    for (const session of sessions) {
+      const sessionDate = getDateKey(session.timestamp)
+      if (sessionDate !== selectedDate) continue
+
+      const sessionHour = new Date(session.timestamp).getHours()
+      const hour = hours[sessionHour]
+      hour.count++
+      if (isSessionComplete(session)) {
+        hour.complete++
+      } else {
+        hour.incomplete++
+      }
+    }
+
+    return hours
+  }, [sessions, selectedDate])
+
+  const maxCount = Math.max(...hourStats.map((h) => h.count), 1)
+  const totalForDay = hourStats.reduce((sum, h) => sum + h.count, 0)
+
+  const displayDate = useMemo(() => {
+    const date = new Date(selectedDate)
+    const today = new Date()
+    const yesterday = new Date(today)
+    yesterday.setDate(yesterday.getDate() - 1)
+
+    if (selectedDate === getDateKey(today.toISOString())) return 'Today'
+    if (selectedDate === getDateKey(yesterday.toISOString())) return 'Yesterday'
+
+    return date.toLocaleDateString('en-US', {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+    })
+  }, [selectedDate])
+
+  return (
+    <div className="bg-zinc-900 rounded-lg p-4 border border-zinc-800 mb-6">
+      {/* Header with navigation */}
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="text-sm font-medium text-zinc-300">Sessions by Hour</h3>
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-zinc-500">
+            {totalForDay} session{totalForDay !== 1 ? 's' : ''}
+          </span>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => navigateDay('prev')}
+              disabled={!canGoBack}
+              className="p-1 rounded bg-zinc-800 text-zinc-400 hover:bg-zinc-700 disabled:opacity-30 disabled:cursor-not-allowed"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+              </svg>
+            </button>
+            <span className="text-sm text-zinc-300 min-w-[100px] text-center font-medium">
+              {displayDate}
+            </span>
+            <button
+              onClick={() => navigateDay('next')}
+              disabled={!canGoForward}
+              className="p-1 rounded bg-zinc-800 text-zinc-400 hover:bg-zinc-700 disabled:opacity-30 disabled:cursor-not-allowed"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Hour bars */}
+      <div className="flex items-end gap-px h-28">
+        {hourStats.map((hour) => {
+          const heightPct = (hour.count / maxCount) * 100
+          const completeHeightPct = hour.count > 0 ? (hour.complete / hour.count) * heightPct : 0
+
+          return (
+            <div key={hour.hour} className="flex-1 flex flex-col items-center group relative">
+              {/* Tooltip */}
+              {hour.count > 0 && (
+                <div className="absolute bottom-full mb-2 hidden group-hover:block z-10">
+                  <div className="bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs whitespace-nowrap">
+                    <div className="font-medium">{hour.label}:00 - {hour.label}:59</div>
+                    <div className="text-zinc-400">
+                      {hour.count} session{hour.count !== 1 ? 's' : ''}
+                      <span className="text-emerald-400 ml-1">
+                        ({hour.complete} complete)
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Bar */}
+              <div className="w-full flex flex-col justify-end h-20">
+                {hour.count > 0 ? (
+                  <div
+                    className="w-full rounded-t transition-all relative overflow-hidden"
+                    style={{ height: `${heightPct}%`, minHeight: '4px' }}
+                  >
+                    {/* Incomplete portion (top) */}
+                    <div
+                      className="absolute top-0 left-0 right-0 bg-amber-500/60"
+                      style={{ height: `${100 - (completeHeightPct / heightPct) * 100}%` }}
+                    />
+                    {/* Complete portion (bottom) */}
+                    <div
+                      className="absolute bottom-0 left-0 right-0 bg-emerald-500"
+                      style={{ height: `${(completeHeightPct / heightPct) * 100}%` }}
+                    />
+                  </div>
+                ) : (
+                  <div className="w-full h-px bg-zinc-800" />
+                )}
+              </div>
+
+              {/* Hour label */}
+              <div className="text-[10px] text-zinc-600 mt-1 leading-none">
+                {hour.hour}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+
+      {/* Legend */}
+      <div className="flex items-center justify-end mt-2">
+        <div className="flex items-center gap-4 text-xs text-zinc-500">
+          <div className="flex items-center gap-1">
+            <div className="w-3 h-3 bg-emerald-500 rounded" />
+            <span>Complete</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <div className="w-3 h-3 bg-amber-500/60 rounded" />
+            <span>Incomplete</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
 }
 
 function FileIndicator({ present, label }: { present: boolean; label: string }) {
@@ -60,50 +264,114 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null)
   const [filter, setFilter] = useState<'all' | 'complete' | 'incomplete'>('all')
 
-  useEffect(() => {
-    fetchSessions()
-  }, [])
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1)
+  const [itemsPerPage, setItemsPerPage] = useState(10)
 
-  async function fetchSessions() {
+  // Auto-refresh state
+  const [autoRefresh, setAutoRefresh] = useState(false)
+  const [lastRefresh, setLastRefresh] = useState<Date | null>(null)
+  const [isRefreshing, setIsRefreshing] = useState(false)
+  const refreshIntervalRef = useRef<NodeJS.Timeout | null>(null)
+
+  const fetchSessions = useCallback(async (showFullLoading = true) => {
     try {
-      setLoading(true)
+      // Only show full loading screen on initial load (when no sessions yet)
+      if (showFullLoading && sessions.length === 0) {
+        setLoading(true)
+      } else {
+        setIsRefreshing(true)
+      }
       const res = await fetch('/api/sessions')
       if (!res.ok) throw new Error('Failed to fetch sessions')
       const data = await res.json()
       setSessions(data.sessions)
+      setLastRefresh(new Date())
+      setError(null)
     } catch (err) {
       setError(String(err))
     } finally {
       setLoading(false)
+      setIsRefreshing(false)
     }
+  }, [sessions.length])
+
+  // Initial fetch
+  useEffect(() => {
+    fetchSessions()
+  }, [fetchSessions])
+
+  // Auto-refresh effect
+  useEffect(() => {
+    if (autoRefresh) {
+      refreshIntervalRef.current = setInterval(() => {
+        fetchSessions(true)
+      }, 5000)
+    } else {
+      if (refreshIntervalRef.current) {
+        clearInterval(refreshIntervalRef.current)
+        refreshIntervalRef.current = null
+      }
+    }
+
+    return () => {
+      if (refreshIntervalRef.current) {
+        clearInterval(refreshIntervalRef.current)
+      }
+    }
+  }, [autoRefresh, fetchSessions])
+
+  const filteredSessions = useMemo(() => {
+    return sessions.filter((session) => {
+      const isComplete = isSessionComplete(session)
+      if (filter === 'complete') return isComplete
+      if (filter === 'incomplete') return !isComplete
+      return true
+    })
+  }, [sessions, filter])
+
+  // Reset to page 1 when filter changes
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [filter])
+
+  // Pagination calculations
+  const totalPages = Math.ceil(filteredSessions.length / itemsPerPage)
+  const startIndex = (currentPage - 1) * itemsPerPage
+  const endIndex = startIndex + itemsPerPage
+  const paginatedSessions = filteredSessions.slice(startIndex, endIndex)
+
+  // Generate page numbers to show
+  const getPageNumbers = () => {
+    const pages: (number | 'ellipsis')[] = []
+    const showPages = 5 // Max page buttons to show
+
+    if (totalPages <= showPages) {
+      for (let i = 1; i <= totalPages; i++) pages.push(i)
+    } else {
+      pages.push(1)
+
+      if (currentPage > 3) pages.push('ellipsis')
+
+      const start = Math.max(2, currentPage - 1)
+      const end = Math.min(totalPages - 1, currentPage + 1)
+
+      for (let i = start; i <= end; i++) pages.push(i)
+
+      if (currentPage < totalPages - 2) pages.push('ellipsis')
+
+      pages.push(totalPages)
+    }
+
+    return pages
   }
 
-  const filteredSessions = sessions.filter((session) => {
-    const isComplete =
-      session.hasScreenVideo &&
-      session.hasScreenAudio &&
-      session.hasCameraVideo &&
-      session.hasAudioRaw &&
-      session.hasAudioClean
-
-    if (filter === 'complete') return isComplete
-    if (filter === 'incomplete') return !isComplete
-    return true
-  })
-
-  const stats = {
+  const stats = useMemo(() => ({
     total: sessions.length,
-    complete: sessions.filter(
-      (s) =>
-        s.hasScreenVideo &&
-        s.hasScreenAudio &&
-        s.hasCameraVideo &&
-        s.hasAudioRaw &&
-        s.hasAudioClean
-    ).length,
+    complete: sessions.filter((s) => isSessionComplete(s)).length,
     missingCamera: sessions.filter((s) => !s.hasCameraVideo).length,
     missingAudio: sessions.filter((s) => !s.hasAudioRaw || !s.hasAudioClean).length,
-  }
+  }), [sessions])
 
   if (loading) {
     return (
@@ -113,12 +381,12 @@ export default function Home() {
     )
   }
 
-  if (error) {
+  if (error && sessions.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center h-[calc(100vh-80px)] gap-4">
         <div className="text-red-400">Error: {error}</div>
         <button
-          onClick={fetchSessions}
+          onClick={() => fetchSessions()}
           className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 rounded-lg"
         >
           Retry
@@ -149,6 +417,9 @@ export default function Home() {
         </div>
       </div>
 
+      {/* Sessions Per Hour Chart */}
+      {sessions.length > 0 && <SessionsPerHourChart sessions={sessions} />}
+
       {/* Filter Tabs */}
       <div className="flex gap-2 mb-4">
         {(['all', 'complete', 'incomplete'] as const).map((f) => (
@@ -167,12 +438,47 @@ export default function Home() {
             {f === 'incomplete' && ` (${sessions.length - stats.complete})`}
           </button>
         ))}
-        <button
-          onClick={fetchSessions}
-          className="ml-auto px-4 py-2 bg-zinc-800 hover:bg-zinc-700 rounded-lg text-sm"
-        >
-          ↻ Refresh
-        </button>
+        <div className="ml-auto flex items-center gap-2">
+          {/* Refreshing indicator */}
+          {isRefreshing && (
+            <div className="flex items-center gap-2 text-xs text-zinc-400">
+              <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+              </svg>
+              Refreshing...
+            </div>
+          )}
+
+          {/* Auto-refresh toggle */}
+          <button
+            onClick={() => setAutoRefresh(!autoRefresh)}
+            className={`px-3 py-2 rounded-lg text-sm flex items-center gap-2 transition-colors ${
+              autoRefresh
+                ? 'bg-emerald-600 text-white'
+                : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700'
+            }`}
+          >
+            <span className={`w-2 h-2 rounded-full ${autoRefresh ? 'bg-white animate-pulse' : 'bg-zinc-500'}`} />
+            Auto {autoRefresh ? 'On' : 'Off'}
+          </button>
+
+          {/* Manual refresh */}
+          <button
+            onClick={() => fetchSessions()}
+            disabled={isRefreshing}
+            className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 rounded-lg text-sm"
+          >
+            ↻ Refresh
+          </button>
+
+          {/* Last refresh time */}
+          {lastRefresh && (
+            <span className="text-xs text-zinc-500">
+              {lastRefresh.toLocaleTimeString()}
+            </span>
+          )}
+        </div>
       </div>
 
       {/* Sessions List */}
@@ -182,7 +488,7 @@ export default function Home() {
             No sessions found
           </div>
         ) : (
-          filteredSessions.map((session) => (
+          paginatedSessions.map((session) => (
             <Link
               key={session.id}
               href={`/session/${session.id}`}
@@ -212,6 +518,79 @@ export default function Home() {
           ))
         )}
       </div>
+
+      {/* Pagination */}
+      {filteredSessions.length > 0 && (
+        <div className="mt-6 flex items-center justify-between">
+          {/* Items per page selector */}
+          <div className="flex items-center gap-2 text-sm text-zinc-400">
+            <span>Show</span>
+            <select
+              value={itemsPerPage}
+              onChange={(e) => {
+                setItemsPerPage(Number(e.target.value))
+                setCurrentPage(1)
+              }}
+              className="bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-zinc-200 focus:outline-none focus:border-zinc-500"
+            >
+              <option value={10}>10</option>
+              <option value={25}>25</option>
+              <option value={50}>50</option>
+              <option value={100}>100</option>
+            </select>
+            <span>per page</span>
+          </div>
+
+          {/* Page info */}
+          <div className="text-sm text-zinc-500">
+            Showing {startIndex + 1}-{Math.min(endIndex, filteredSessions.length)} of {filteredSessions.length}
+          </div>
+
+          {/* Page numbers */}
+          {totalPages > 1 && (
+            <div className="flex items-center gap-1">
+              {/* Previous button */}
+              <button
+                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                disabled={currentPage === 1}
+                className="px-2 py-1 rounded bg-zinc-800 text-zinc-400 hover:bg-zinc-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                ←
+              </button>
+
+              {/* Page numbers */}
+              {getPageNumbers().map((page, idx) =>
+                page === 'ellipsis' ? (
+                  <span key={`ellipsis-${idx}`} className="px-2 text-zinc-600">
+                    ...
+                  </span>
+                ) : (
+                  <button
+                    key={page}
+                    onClick={() => setCurrentPage(page)}
+                    className={`px-3 py-1 rounded text-sm font-medium transition-colors ${
+                      currentPage === page
+                        ? 'bg-zinc-100 text-zinc-900'
+                        : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'
+                    }`}
+                  >
+                    {page}
+                  </button>
+                )
+              )}
+
+              {/* Next button */}
+              <button
+                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                disabled={currentPage === totalPages}
+                className="px-2 py-1 rounded bg-zinc-800 text-zinc-400 hover:bg-zinc-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                →
+              </button>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }

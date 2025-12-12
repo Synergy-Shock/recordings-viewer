@@ -2,7 +2,7 @@ import type { Metadata } from 'next'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'Recordings Viewer',
+  title: 'Bert Logs Viewer',
   description: 'Browse and play session recordings from R2 storage',
 }
 
@@ -16,7 +16,7 @@ export default function RootLayout({
       <body className="min-h-screen bg-zinc-950 text-zinc-100 antialiased">
         <div className="flex flex-col min-h-screen">
           <header className="border-b border-zinc-800 px-6 py-4">
-            <h1 className="text-xl font-semibold">Recordings Viewer</h1>
+            <h1 className="text-xl font-semibold">Bert Logs Viewer</h1>
           </header>
           <main className="flex-1">
             {children}
