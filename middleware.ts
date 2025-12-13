@@ -9,22 +9,27 @@ export function middleware(request: NextRequest) {
   const validUser = process.env.AUTH_USERNAME
   const validPass = process.env.AUTH_PASSWORD
 
-  // Debug logging (remove after testing)
-  console.log('Middleware running - has validUser:', !!validUser, 'has validPass:', !!validPass)
+  // Debug: return env status in header
+  const response = NextResponse.rewrite(new URL('/api/auth', request.url))
+  response.headers.set('X-Debug-Has-User', validUser ? 'yes' : 'no')
+  response.headers.set('X-Debug-Has-Pass', validPass ? 'yes' : 'no')
+  response.headers.set('X-Debug-User-Length', validUser?.length?.toString() || '0')
+  response.headers.set('X-Debug-Pass-Length', validPass?.length?.toString() || '0')
 
   if (basicAuth) {
     const authValue = basicAuth.split(' ')[1]
     const [user, pwd] = atob(authValue).split(':')
 
-    console.log('Auth attempt - user:', user, 'matches:', user === validUser, 'pwd matches:', pwd === validPass)
+    response.headers.set('X-Debug-Sent-User', user)
+    response.headers.set('X-Debug-User-Match', (user === validUser).toString())
+    response.headers.set('X-Debug-Pass-Match', (pwd === validPass).toString())
 
     if (user === validUser && pwd === validPass) {
       return NextResponse.next()
     }
   }
 
-  url.pathname = '/api/auth'
-  return NextResponse.rewrite(url)
+  return response
 }
 
 export const config = {
