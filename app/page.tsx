@@ -10,6 +10,11 @@ interface SessionFile {
   type: string
 }
 
+interface SessionMetadata {
+  favorite: boolean
+  score: number | null
+}
+
 interface Session {
   id: string
   timestamp: string
@@ -20,6 +25,7 @@ interface Session {
   hasAudioRaw: boolean
   hasAudioClean: boolean
   totalSize: number
+  metadata: SessionMetadata
 }
 
 
@@ -43,7 +49,11 @@ function formatDate(dateString: string): string {
 
 function getDateKey(dateString: string): string {
   const date = new Date(dateString)
-  return date.toISOString().split('T')[0]
+  // Use local date components (not UTC) to match getHours() which uses local time
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
 }
 
 function isSessionComplete(session: Session): boolean {
@@ -82,7 +92,10 @@ function SessionsPerHourChart({ sessions }: { sessions: Session[] }) {
   const canGoBack = selectedDate > earliestDate
 
   const navigateDay = (direction: 'prev' | 'next') => {
-    const current = new Date(selectedDate)
+    // Parse selectedDate as local time (not UTC)
+    // new Date("YYYY-MM-DD") parses as UTC, causing timezone bugs
+    const [year, month, day] = selectedDate.split('-').map(Number)
+    const current = new Date(year, month - 1, day) // Creates local midnight
     current.setDate(current.getDate() + (direction === 'next' ? 1 : -1))
     setSelectedDate(getDateKey(current.toISOString()))
   }
@@ -122,7 +135,9 @@ function SessionsPerHourChart({ sessions }: { sessions: Session[] }) {
   const totalForDay = hourStats.reduce((sum, h) => sum + h.count, 0)
 
   const displayDate = useMemo(() => {
-    const date = new Date(selectedDate)
+    // Parse as local time to display correct day name
+    const [year, month, day] = selectedDate.split('-').map(Number)
+    const date = new Date(year, month - 1, day)
     const today = new Date()
     const yesterday = new Date(today)
     yesterday.setDate(yesterday.getDate() - 1)
@@ -258,11 +273,117 @@ function FileIndicator({ present, label }: { present: boolean; label: string }) 
   )
 }
 
+function FavoriteButton({
+  sessionId,
+  favorite,
+  onUpdate
+}: {
+  sessionId: string
+  favorite: boolean
+  onUpdate: (favorite: boolean) => void
+}) {
+  const [loading, setLoading] = useState(false)
+
+  const toggle = async (e: React.MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setLoading(true)
+    try {
+      const res = await fetch(`/api/sessions/${sessionId}/metadata`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ favorite: !favorite }),
+      })
+      if (res.ok) {
+        onUpdate(!favorite)
+      }
+    } catch (err) {
+      console.error('Failed to update favorite:', err)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <button
+      onClick={toggle}
+      disabled={loading}
+      className={`p-1 rounded transition-colors ${
+        favorite
+          ? 'text-yellow-400 hover:text-yellow-300'
+          : 'text-zinc-600 hover:text-zinc-400'
+      } ${loading ? 'opacity-50' : ''}`}
+      title={favorite ? 'Remove from favorites' : 'Add to favorites'}
+    >
+      <svg className="w-5 h-5" fill={favorite ? 'currentColor' : 'none'} stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
+      </svg>
+    </button>
+  )
+}
+
+function ScoreSelector({
+  sessionId,
+  score,
+  onUpdate,
+}: {
+  sessionId: string
+  score: number | null
+  onUpdate: (score: number | null) => void
+}) {
+  const [loading, setLoading] = useState(false)
+
+  const setScore = async (e: React.MouseEvent, newScore: number) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setLoading(true)
+    try {
+      // If clicking same score, clear it
+      const finalScore = newScore === score ? null : newScore
+      const res = await fetch(`/api/sessions/${sessionId}/metadata`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ score: finalScore }),
+      })
+      if (res.ok) {
+        onUpdate(finalScore)
+      }
+    } catch (err) {
+      console.error('Failed to update score:', err)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className={`flex items-center gap-0.5 ${loading ? 'opacity-50' : ''}`}>
+      {[1, 2, 3, 4, 5].map((n) => (
+        <button
+          key={n}
+          onClick={(e) => setScore(e, n)}
+          disabled={loading}
+          className={`p-0.5 transition-colors ${
+            score !== null && n <= score
+              ? 'text-amber-400'
+              : 'text-zinc-700 hover:text-zinc-500'
+          }`}
+          title={`Rate ${n} star${n > 1 ? 's' : ''}`}
+        >
+          <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+            <path d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
+          </svg>
+        </button>
+      ))}
+    </div>
+  )
+}
+
 export default function Home() {
   const [sessions, setSessions] = useState<Session[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [filter, setFilter] = useState<'all' | 'complete' | 'incomplete'>('all')
+  const [filter, setFilter] = useState<'all' | 'complete' | 'incomplete' | 'favorites'>('all')
+  const [metadataLoading, setMetadataLoading] = useState(false)
 
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1)
@@ -273,6 +394,9 @@ export default function Home() {
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const refreshIntervalRef = useRef<NodeJS.Timeout | null>(null)
+
+  // Ref to track which sessions have had metadata fetched
+  const metadataFetchedRef = useRef<Set<string>>(new Set())
 
   const fetchSessions = useCallback(async (showFullLoading = true) => {
     try {
@@ -285,7 +409,17 @@ export default function Home() {
       const res = await fetch('/api/sessions')
       if (!res.ok) throw new Error('Failed to fetch sessions')
       const data = await res.json()
-      setSessions(data.sessions)
+      const newSessions = data.sessions as Session[]
+
+      // Merge with existing metadata (preserve already-fetched metadata)
+      setSessions(prev => {
+        const metadataMap = new Map(prev.map(s => [s.id, s.metadata]))
+        return newSessions.map(s => ({
+          ...s,
+          metadata: metadataMap.get(s.id) || s.metadata
+        }))
+      })
+
       setLastRefresh(new Date())
       setError(null)
     } catch (err) {
@@ -326,6 +460,7 @@ export default function Home() {
       const isComplete = isSessionComplete(session)
       if (filter === 'complete') return isComplete
       if (filter === 'incomplete') return !isComplete
+      if (filter === 'favorites') return session.metadata?.favorite === true
       return true
     })
   }, [sessions, filter])
@@ -340,6 +475,44 @@ export default function Home() {
   const startIndex = (currentPage - 1) * itemsPerPage
   const endIndex = startIndex + itemsPerPage
   const paginatedSessions = filteredSessions.slice(startIndex, endIndex)
+
+  // Lazy-load metadata only for visible (paginated) sessions
+  useEffect(() => {
+    if (paginatedSessions.length === 0 || loading) return
+
+    // Find visible sessions that need metadata fetched
+    const sessionsToFetch = paginatedSessions.filter(s => !metadataFetchedRef.current.has(s.id))
+    if (sessionsToFetch.length === 0) {
+      setMetadataLoading(false)
+      return
+    }
+
+    setMetadataLoading(true)
+
+    // Fetch metadata only for visible sessions
+    const fetchVisibleMetadata = async () => {
+      await Promise.all(
+        sessionsToFetch.map(async (session) => {
+          try {
+            const res = await fetch(`/api/sessions/${session.id}/metadata`)
+            if (res.ok) {
+              const metadata = await res.json()
+              metadataFetchedRef.current.add(session.id)
+              setSessions(prev => prev.map(s =>
+                s.id === session.id ? { ...s, metadata } : s
+              ))
+            }
+          } catch (err) {
+            console.error(`Failed to fetch metadata for ${session.id}:`, err)
+          }
+        })
+      )
+      setMetadataLoading(false)
+    }
+
+    fetchVisibleMetadata()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paginatedSessions.map(s => s.id).join(','), loading])
 
   // Generate page numbers to show
   const getPageNumbers = () => {
@@ -371,6 +544,7 @@ export default function Home() {
     complete: sessions.filter((s) => isSessionComplete(s)).length,
     missingCamera: sessions.filter((s) => !s.hasCameraVideo).length,
     missingAudio: sessions.filter((s) => !s.hasAudioRaw || !s.hasAudioClean).length,
+    favorites: sessions.filter((s) => s.metadata?.favorite === true).length,
   }), [sessions])
 
   if (loading) {
@@ -422,18 +596,19 @@ export default function Home() {
 
       {/* Filter Tabs */}
       <div className="flex gap-2 mb-4">
-        {(['all', 'complete', 'incomplete'] as const).map((f) => (
+        {(['all', 'favorites', 'complete', 'incomplete'] as const).map((f) => (
           <button
             key={f}
             onClick={() => setFilter(f)}
             className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
               filter === f
-                ? 'bg-zinc-100 text-zinc-900'
+                ? f === 'favorites' ? 'bg-yellow-500 text-black' : 'bg-zinc-100 text-zinc-900'
                 : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700'
             }`}
           >
-            {f.charAt(0).toUpperCase() + f.slice(1)}
+            {f === 'favorites' ? '★ Favorites' : f.charAt(0).toUpperCase() + f.slice(1)}
             {f === 'all' && ` (${sessions.length})`}
+            {f === 'favorites' && ` (${metadataLoading ? '...' : stats.favorites})`}
             {f === 'complete' && ` (${stats.complete})`}
             {f === 'incomplete' && ` (${sessions.length - stats.complete})`}
           </button>
@@ -495,7 +670,18 @@ export default function Home() {
               className="block bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-lg p-4 transition-colors"
             >
               <div className="flex items-center justify-between">
-                <div className="flex items-center gap-4">
+                <div className="flex items-center gap-3">
+                  <FavoriteButton
+                    sessionId={session.id}
+                    favorite={session.metadata?.favorite ?? false}
+                    onUpdate={(favorite) => {
+                      setSessions(prev => prev.map(s =>
+                        s.id === session.id
+                          ? { ...s, metadata: { ...s.metadata, favorite } }
+                          : s
+                      ))
+                    }}
+                  />
                   <div>
                     <div className="font-mono text-sm text-zinc-300">
                       {session.id}
@@ -505,13 +691,26 @@ export default function Home() {
                     </div>
                   </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <FileIndicator present={session.hasScreenVideo} label="Screen" />
-                  <FileIndicator present={session.hasCameraVideo} label="Camera" />
-                  <FileIndicator
-                    present={session.hasAudioRaw && session.hasAudioClean}
-                    label="Audio"
+                <div className="flex items-center gap-4">
+                  <ScoreSelector
+                    sessionId={session.id}
+                    score={session.metadata?.score ?? null}
+                    onUpdate={(score) => {
+                      setSessions(prev => prev.map(s =>
+                        s.id === session.id
+                          ? { ...s, metadata: { ...s.metadata, score } }
+                          : s
+                      ))
+                    }}
                   />
+                  <div className="flex items-center gap-2">
+                    <FileIndicator present={session.hasScreenVideo} label="Screen" />
+                    <FileIndicator present={session.hasCameraVideo} label="Camera" />
+                    <FileIndicator
+                      present={session.hasAudioRaw && session.hasAudioClean}
+                      label="Audio"
+                    />
+                  </div>
                 </div>
               </div>
             </Link>

@@ -38,12 +38,19 @@ export async function GET(request: NextRequest) {
     if (key.endsWith('.wav')) contentType = 'audio/wav'
     else if (key.endsWith('.mp4')) contentType = 'video/mp4'
     else if (key.endsWith('.mp3')) contentType = 'audio/mpeg'
+    else if (key.endsWith('.vtt')) contentType = 'text/vtt'
+
+    // Don't cache VTT files - they may be regenerated
+    // Cache media files for 1 hour
+    const cacheControl = key.endsWith('.vtt')
+      ? 'no-cache, no-store, must-revalidate'
+      : 'public, max-age=3600'
 
     return new NextResponse(buffer, {
       headers: {
         'Content-Type': contentType,
         'Content-Length': buffer.length.toString(),
-        'Cache-Control': 'public, max-age=3600',
+        'Cache-Control': cacheControl,
       },
     })
   } catch (error) {
