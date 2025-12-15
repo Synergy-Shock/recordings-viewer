@@ -40,3 +40,12 @@ body {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.5; }
 }
+
+/* Native video subtitle styling */
+video::cue {
+  background-color: rgba(37, 99, 235, 0.9);
+  color: white;
+  font-size: 1.1rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: 0.25rem;
+}
