@@ -9,6 +9,7 @@ export const s3Client = new S3Client({
     accessKeyId: process.env.S3_ACCESS_KEY || '',
     secretAccessKey: process.env.S3_SECRET_KEY || '',
   },
+  forcePathStyle: true, // Required for MinIO and other S3-compatible services
 })
 
 export const BUCKET = process.env.S3_BUCKET || 'recordings'
