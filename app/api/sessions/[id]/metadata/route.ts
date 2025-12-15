@@ -7,7 +7,18 @@ export async function GET(
 ) {
   try {
     const { id } = await params
-    const metadata = await getSessionMetadata(id)
+    const { searchParams } = new URL(request.url)
+    const org = searchParams.get('org')
+    const device = searchParams.get('device')
+
+    if (!org || !device) {
+      return NextResponse.json(
+        { error: 'Missing org or device parameter' },
+        { status: 400 }
+      )
+    }
+
+    const metadata = await getSessionMetadata(org, device, id)
     return NextResponse.json(metadata)
   } catch (error) {
     console.error('Failed to get metadata:', error)
@@ -24,6 +35,17 @@ export async function PUT(
 ) {
   try {
     const { id } = await params
+    const { searchParams } = new URL(request.url)
+    const org = searchParams.get('org')
+    const device = searchParams.get('device')
+
+    if (!org || !device) {
+      return NextResponse.json(
+        { error: 'Missing org or device parameter' },
+        { status: 400 }
+      )
+    }
+
     const body = await request.json()
 
     // Validate input
@@ -44,7 +66,7 @@ export async function PUT(
       )
     }
 
-    const metadata = await updateSessionMetadata(id, updates)
+    const metadata = await updateSessionMetadata(org, device, id, updates)
 
     return NextResponse.json({ success: true, metadata })
   } catch (error) {

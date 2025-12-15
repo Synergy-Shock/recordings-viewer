@@ -2,7 +2,9 @@
   "permissions": {
     "allow": [
       "Bash(gh auth:*)",
-      "Bash(git --version:*)"
+      "Bash(git --version:*)",
+      "Bash(npm run build:*)",
+      "Bash(npm install:*)"
     ]
   }
 }

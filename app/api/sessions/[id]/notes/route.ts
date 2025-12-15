@@ -7,7 +7,18 @@ export async function GET(
 ) {
   try {
     const { id } = await params
-    const notes = await getSessionNotes(id)
+    const { searchParams } = new URL(request.url)
+    const org = searchParams.get('org')
+    const device = searchParams.get('device')
+
+    if (!org || !device) {
+      return NextResponse.json(
+        { error: 'Missing org or device parameter' },
+        { status: 400 }
+      )
+    }
+
+    const notes = await getSessionNotes(org, device, id)
     return NextResponse.json({ notes })
   } catch (error) {
     console.error('Failed to get notes:', error)
@@ -24,6 +35,17 @@ export async function POST(
 ) {
   try {
     const { id } = await params
+    const { searchParams } = new URL(request.url)
+    const org = searchParams.get('org')
+    const device = searchParams.get('device')
+
+    if (!org || !device) {
+      return NextResponse.json(
+        { error: 'Missing org or device parameter' },
+        { status: 400 }
+      )
+    }
+
     const body = await request.json()
 
     // Validate input
@@ -49,7 +71,7 @@ export async function POST(
       )
     }
 
-    const note = await addNote(id, {
+    const note = await addNote(org, device, id, {
       timestamp: body.timestamp,
       content: body.content.trim(),
       resource: body.resource,
@@ -71,6 +93,17 @@ export async function PUT(
 ) {
   try {
     const { id } = await params
+    const { searchParams } = new URL(request.url)
+    const org = searchParams.get('org')
+    const device = searchParams.get('device')
+
+    if (!org || !device) {
+      return NextResponse.json(
+        { error: 'Missing org or device parameter' },
+        { status: 400 }
+      )
+    }
+
     const body = await request.json()
 
     if (!body.noteId) {
@@ -102,7 +135,7 @@ export async function PUT(
       )
     }
 
-    const note = await updateNote(id, body.noteId, updates)
+    const note = await updateNote(org, device, id, body.noteId, updates)
     if (!note) {
       return NextResponse.json(
         { error: 'Note not found' },
@@ -127,7 +160,16 @@ export async function DELETE(
   try {
     const { id } = await params
     const { searchParams } = new URL(request.url)
+    const org = searchParams.get('org')
+    const device = searchParams.get('device')
     const noteId = searchParams.get('noteId')
+
+    if (!org || !device) {
+      return NextResponse.json(
+        { error: 'Missing org or device parameter' },
+        { status: 400 }
+      )
+    }
 
     if (!noteId) {
       return NextResponse.json(
@@ -136,7 +178,7 @@ export async function DELETE(
       )
     }
 
-    const success = await deleteNote(id, noteId)
+    const success = await deleteNote(org, device, id, noteId)
     if (!success) {
       return NextResponse.json(
         { error: 'Note not found' },
