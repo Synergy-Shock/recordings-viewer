@@ -47,6 +47,12 @@ function formatDate(dateString: string): string {
   })
 }
 
+function formatDuration(seconds: number): string {
+  const mins = Math.floor(seconds / 60)
+  const secs = Math.floor(seconds % 60)
+  return `${mins}:${secs.toString().padStart(2, '0')}`
+}
+
 function getDateKey(dateString: string): string {
   const date = new Date(dateString)
   // Use local date components (not UTC) to match getHours() which uses local time
@@ -398,6 +404,10 @@ export default function Home() {
   // Ref to track which sessions have had metadata fetched
   const metadataFetchedRef = useRef<Set<string>>(new Set())
 
+  // Duration state - maps session ID to duration in seconds
+  const [durations, setDurations] = useState<Record<string, number>>({})
+  const durationFetchedRef = useRef<Set<string>>(new Set())
+
   const fetchSessions = useCallback(async (showFullLoading = true) => {
     try {
       // Only show full loading screen on initial load (when no sessions yet)
@@ -511,6 +521,49 @@ export default function Home() {
     }
 
     fetchVisibleMetadata()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paginatedSessions.map(s => s.id).join(','), loading])
+
+  // Lazy-load video duration for visible sessions
+  useEffect(() => {
+    if (paginatedSessions.length === 0 || loading) return
+
+    // Find visible sessions with screen video that need duration fetched
+    const sessionsToFetch = paginatedSessions.filter(
+      s => s.hasScreenVideo && !durationFetchedRef.current.has(s.id)
+    )
+    if (sessionsToFetch.length === 0) return
+
+    // Fetch duration for each session
+    sessionsToFetch.forEach(async (session) => {
+      try {
+        durationFetchedRef.current.add(session.id)
+
+        // Get presigned URL for video
+        const res = await fetch(`/api/sessions/${session.id}/video-url`)
+        if (!res.ok) return
+        const { url } = await res.json()
+
+        // Create hidden video element to extract duration
+        const video = document.createElement('video')
+        video.preload = 'metadata'
+        video.src = url
+
+        video.onloadedmetadata = () => {
+          if (video.duration && isFinite(video.duration)) {
+            setDurations(prev => ({ ...prev, [session.id]: video.duration }))
+          }
+          video.remove()
+        }
+
+        video.onerror = () => {
+          console.error(`Failed to load video metadata for ${session.id}`)
+          video.remove()
+        }
+      } catch (err) {
+        console.error(`Failed to fetch video URL for ${session.id}:`, err)
+      }
+    })
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [paginatedSessions.map(s => s.id).join(','), loading])
 
@@ -688,6 +741,9 @@ export default function Home() {
                     </div>
                     <div className="text-xs text-zinc-500">
                       {formatDate(session.timestamp)} · {formatBytes(session.totalSize)}
+                      {durations[session.id] !== undefined && (
+                        <span className="text-zinc-400"> · {formatDuration(durations[session.id])}</span>
+                      )}
                     </div>
                   </div>
                 </div>
