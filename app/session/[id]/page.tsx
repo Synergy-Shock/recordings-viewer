@@ -711,6 +711,18 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
         const data = await res.json()
         const found = data.sessions.find((s: Session) => s.id === id)
         if (!found) throw new Error('Session not found')
+
+        // Also fetch metadata for this session
+        try {
+          const metadataRes = await fetch(`/api/sessions/${id}/metadata`)
+          if (metadataRes.ok) {
+            const metadata = await metadataRes.json()
+            found.metadata = metadata
+          }
+        } catch {
+          // Metadata fetch failed, continue with default
+        }
+
         setSession(found)
       } catch (err) {
         setError(String(err))
