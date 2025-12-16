@@ -9,6 +9,7 @@ export const s3Client = new S3Client({
     accessKeyId: process.env.S3_ACCESS_KEY || '',
     secretAccessKey: process.env.S3_SECRET_KEY || '',
   },
+  forcePathStyle: true, // Required for MinIO and other S3-compatible services
 })
 
 export const BUCKET = process.env.S3_BUCKET || 'recordings'
@@ -33,7 +34,15 @@ export interface SessionMetadata {
 }
 
 export interface Session {
-  id: string
+  id: string           // Display ID: sess_xxxxx
+  fullId: string       // Folder name: HH-MM-SS_sess_xxxxx (used in URLs)
+  org: string
+  device: string
+  year: string
+  month: string
+  day: string
+  time: string         // HH-MM-SS
+  prefix: string       // Full path: org/device/year/month/day/fullId
   timestamp: Date
   files: SessionFile[]
   hasScreenVideo: boolean
@@ -48,6 +57,54 @@ export interface Session {
   metadata: SessionMetadata
 }
 
+// Helper to build the full path prefix for a session
+export function getSessionPrefix(org: string, device: string, year: string, month: string, day: string, fullId: string): string {
+  return `${org}/${device}/${year}/${month}/${day}/${fullId}`
+}
+
+// Parse fullId (HH-MM-SS_sess_xxxxx) into time and displayId
+export function parseFullId(fullId: string): { time: string; displayId: string } {
+  // Format: HH-MM-SS_sess_xxxxx
+  const match = fullId.match(/^(\d{2}-\d{2}-\d{2})_(.+)$/)
+  if (match) {
+    return { time: match[1], displayId: match[2] }
+  }
+  // Fallback for old format or unexpected input
+  return { time: '00-00-00', displayId: fullId }
+}
+
+// Find the full prefix path for a session by searching
+export async function findSessionPrefix(org: string, device: string, fullId: string): Promise<string | null> {
+  // Search for any file under this session
+  const searchPrefix = `${org}/${device}/`
+  let continuationToken: string | undefined
+
+  do {
+    const command = new ListObjectsV2Command({
+      Bucket: BUCKET,
+      Prefix: searchPrefix,
+      ContinuationToken: continuationToken,
+    })
+
+    const response = await s3Client.send(command)
+
+    for (const obj of response.Contents || []) {
+      if (!obj.Key) continue
+
+      // Path: org/device/year/month/day/fullId/...
+      const parts = obj.Key.split('/')
+      if (parts.length >= 6 && parts[5] === fullId) {
+        // Found it! Return the prefix
+        return `${parts[0]}/${parts[1]}/${parts[2]}/${parts[3]}/${parts[4]}/${parts[5]}`
+      }
+    }
+
+    continuationToken = response.NextContinuationToken
+  } while (continuationToken)
+
+  return null
+}
+
 function getFileType(key: string): SessionFile['type'] {
   if (key.includes('screen/video')) return 'screen-video'
   if (key.includes('screen/audio.wav')) return 'screen-audio'
@@ -60,14 +117,77 @@ function getFileType(key: string): SessionFile['type'] {
   return 'unknown'
 }
 
-export async function listSessions(): Promise<Session[]> {
+// List all organizations in the bucket
+export async function listOrgs(): Promise<string[]> {
+  const orgs = new Set<string>()
+  let continuationToken: string | undefined
+
+  do {
+    const command = new ListObjectsV2Command({
+      Bucket: BUCKET,
+      Delimiter: '/',
+      ContinuationToken: continuationToken,
+    })
+
+    const response = await s3Client.send(command)
+
+    // CommonPrefixes contains the org-level folders
+    for (const prefix of response.CommonPrefixes || []) {
+      if (prefix.Prefix) {
+        const org = prefix.Prefix.replace(/\/$/, '')
+        orgs.add(org)
+      }
+    }
+
+    continuationToken = response.NextContinuationToken
+  } while (continuationToken)
+
+  return Array.from(orgs).sort()
+}
+
+// List all devices for a given organization
+export async function listDevices(org: string): Promise<string[]> {
+  const devices = new Set<string>()
+  let continuationToken: string | undefined
+
+  do {
+    const command = new ListObjectsV2Command({
+      Bucket: BUCKET,
+      Prefix: `${org}/`,
+      Delimiter: '/',
+      ContinuationToken: continuationToken,
+    })
+
+    const response = await s3Client.send(command)
+
+    // CommonPrefixes contains the device-level folders
+    for (const prefix of response.CommonPrefixes || []) {
+      if (prefix.Prefix) {
+        // Extract device name from "org/device/"
+        const parts = prefix.Prefix.split('/')
+        if (parts.length >= 2 && parts[1]) {
+          devices.add(parts[1])
+        }
+      }
+    }
+
+    continuationToken = response.NextContinuationToken
+  } while (continuationToken)
+
+  return Array.from(devices).sort()
+}
+
+// List sessions for a specific org and device
+export async function listSessions(org: string, device: string): Promise<Session[]> {
   const sessions = new Map<string, Session>()
+  const searchPrefix = `${org}/${device}/`
 
   let continuationToken: string | undefined
 
   do {
     const command = new ListObjectsV2Command({
       Bucket: BUCKET,
+      Prefix: searchPrefix,
       ContinuationToken: continuationToken,
     })
 
@@ -76,16 +196,45 @@ export async function listSessions(): Promise<Session[]> {
     for (const obj of response.Contents || []) {
       if (!obj.Key || !obj.Size || !obj.LastModified) continue
 
-      // Extract session ID (first part of the key path)
+      // Path: org/device/year/month/day/HH-MM-SS_sess_xxxxx/file...
+      // Parts: [org, device, year, month, day, fullId, file, ...]
       const parts = obj.Key.split('/')
-      if (parts.length < 2) continue
+      if (parts.length < 7) continue
 
-      const sessionId = parts[0]
+      const year = parts[2]
+      const month = parts[3]
+      const day = parts[4]
+      const fullId = parts[5]
 
-      if (!sessions.has(sessionId)) {
-        sessions.set(sessionId, {
-          id: sessionId,
-          timestamp: obj.LastModified,
+      // Validate date parts (should be numeric)
+      if (!/^\d{4}$/.test(year) || !/^\d{2}$/.test(month) || !/^\d{2}$/.test(day)) continue
+
+      const prefix = `${org}/${device}/${year}/${month}/${day}/${fullId}`
+      const { time, displayId } = parseFullId(fullId)
+
+      // Build timestamp from date components and time
+      const [hours, minutes, seconds] = time.split('-').map(Number)
+      const sessionTimestamp = new Date(
+        parseInt(year),
+        parseInt(month) - 1, // Month is 0-indexed
+        parseInt(day),
+        hours || 0,
+        minutes || 0,
+        seconds || 0
+      )
+
+      if (!sessions.has(prefix)) {
+        sessions.set(prefix, {
+          id: displayId,
+          fullId,
+          org,
+          device,
+          year,
+          month,
+          day,
+          time,
+          prefix,
+          timestamp: sessionTimestamp,
           files: [],
           hasScreenVideo: false,
           hasScreenAudio: false,
@@ -100,7 +249,7 @@ export async function listSessions(): Promise<Session[]> {
         })
       }
 
-      const session = sessions.get(sessionId)!
+      const session = sessions.get(prefix)!
       const fileType = getFileType(obj.Key)
 
       session.files.push({
@@ -111,11 +260,6 @@ export async function listSessions(): Promise<Session[]> {
       })
 
       session.totalSize += obj.Size
-
-      // Update timestamp to latest file
-      if (obj.LastModified > session.timestamp) {
-        session.timestamp = obj.LastModified
-      }
 
       // Update file presence flags
       switch (fileType) {
@@ -216,9 +360,12 @@ const DEFAULT_METADATA: SessionMetadata = {
   score: null,
 }
 
-export async function getSessionMetadata(sessionId: string): Promise<SessionMetadata> {
+export async function getSessionMetadata(org: string, device: string, fullId: string): Promise<SessionMetadata> {
   try {
-    const buffer = await getFileBuffer(`${sessionId}/metadata.json`)
+    const prefix = await findSessionPrefix(org, device, fullId)
+    if (!prefix) return { ...DEFAULT_METADATA }
+
+    const buffer = await getFileBuffer(`${prefix}/metadata.json`)
     const data = JSON.parse(buffer.toString('utf-8'))
     return {
       favorite: data.favorite ?? false,
@@ -231,16 +378,24 @@ export async function getSessionMetadata(sessionId: string): Promise<SessionMeta
 }
 
 export async function updateSessionMetadata(
-  sessionId: string,
+  org: string,
+  device: string,
+  fullId: string,
   updates: Partial<SessionMetadata>
 ): Promise<SessionMetadata> {
+  // Find the session prefix
+  const prefix = await findSessionPrefix(org, device, fullId)
+  if (!prefix) {
+    throw new Error('Session not found')
+  }
+
   // Get existing metadata first
-  const existing = await getSessionMetadata(sessionId)
+  const existing = await getSessionMetadata(org, device, fullId)
   const updated = { ...existing, ...updates }
 
   // Save to S3
   await uploadFile(
-    `${sessionId}/metadata.json`,
+    `${prefix}/metadata.json`,
     JSON.stringify(updated, null, 2),
     'application/json'
   )
@@ -259,9 +414,12 @@ export interface Note {
   createdAt: string // ISO date
 }
 
-export async function getSessionNotes(sessionId: string): Promise<Note[]> {
+export async function getSessionNotes(org: string, device: string, fullId: string): Promise<Note[]> {
   try {
-    const buffer = await getFileBuffer(`${sessionId}/notes.json`)
+    const prefix = await findSessionPrefix(org, device, fullId)
+    if (!prefix) return []
+
+    const buffer = await getFileBuffer(`${prefix}/notes.json`)
     const data = JSON.parse(buffer.toString('utf-8'))
     return Array.isArray(data) ? data : []
   } catch {
@@ -270,42 +428,46 @@ export async function getSessionNotes(sessionId: string): Promise<Note[]> {
   }
 }
 
-export async function saveSessionNotes(sessionId: string, notes: Note[]): Promise<void> {
+export async function saveSessionNotes(org: string, device: string, fullId: string, notes: Note[]): Promise<void> {
+  const prefix = await findSessionPrefix(org, device, fullId)
+  if (!prefix) {
+    throw new Error('Session not found')
+  }
   await uploadFile(
-    `${sessionId}/notes.json`,
+    `${prefix}/notes.json`,
     JSON.stringify(notes, null, 2),
     'application/json'
   )
 }
 
-export async function addNote(sessionId: string, note: Omit<Note, 'id' | 'createdAt'>): Promise<Note> {
-  const notes = await getSessionNotes(sessionId)
+export async function addNote(org: string, device: string, fullId: string, note: Omit<Note, 'id' | 'createdAt'>): Promise<Note> {
+  const notes = await getSessionNotes(org, device, fullId)
   const newNote: Note = {
     ...note,
     id: crypto.randomUUID(),
     createdAt: new Date().toISOString(),
   }
   notes.push(newNote)
-  await saveSessionNotes(sessionId, notes)
+  await saveSessionNotes(org, device, fullId, notes)
   return newNote
 }
 
-export async function updateNote(sessionId: string, noteId: string, updates: Partial<Pick<Note, 'content' | 'timestamp' | 'resource'>>): Promise<Note | null> {
-  const notes = await getSessionNotes(sessionId)
+export async function updateNote(org: string, device: string, fullId: string, noteId: string, updates: Partial<Pick<Note, 'content' | 'timestamp' | 'resource'>>): Promise<Note | null> {
+  const notes = await getSessionNotes(org, device, fullId)
   const index = notes.findIndex(n => n.id === noteId)
   if (index === -1) return null
 
   notes[index] = { ...notes[index], ...updates }
-  await saveSessionNotes(sessionId, notes)
+  await saveSessionNotes(org, device, fullId, notes)
   return notes[index]
 }
 
-export async function deleteNote(sessionId: string, noteId: string): Promise<boolean> {
-  const notes = await getSessionNotes(sessionId)
+export async function deleteNote(org: string, device: string, fullId: string, noteId: string): Promise<boolean> {
+  const notes = await getSessionNotes(org, device, fullId)
   const index = notes.findIndex(n => n.id === noteId)
   if (index === -1) return false
 
   notes.splice(index, 1)
-  await saveSessionNotes(sessionId, notes)
+  await saveSessionNotes(org, device, fullId, notes)
   return true
 }

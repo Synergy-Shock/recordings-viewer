@@ -1,12 +1,14 @@
 import { NextResponse } from 'next/server'
 import OpenAI from 'openai'
-import { getFileBuffer, uploadFile } from '@/lib/s3'
+import { getFileBuffer, uploadFile, findSessionPrefix } from '@/lib/s3'
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-})
+function getOpenAIClient() {
+  return new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY,
+  })
+}
 
-// Map audio types to their S3 paths and VTT output paths
+// Map audio types to their S3 paths and VTT output paths (relative to session prefix)
 const AUDIO_CONFIG: Record<string, { audioPath: string; vttPath: string }> = {
   'screen-audio': { audioPath: 'screen/audio.wav', vttPath: 'screen/audio.vtt' },
   'audio-raw': { audioPath: 'audio/raw.wav', vttPath: 'audio/raw.vtt' },
@@ -59,11 +61,18 @@ function convertToVtt(cues: SubtitleCue[]): string {
 
 export async function POST(request: Request) {
   try {
-    const { sessionId, audioType } = await request.json()
+    const { sessionId, audioType, org, device } = await request.json()
 
     if (!sessionId || !audioType) {
       return NextResponse.json(
         { error: 'Missing sessionId or audioType' },
+        { status: 400 }
+      )
+    }
+
+    if (!org || !device) {
+      return NextResponse.json(
+        { error: 'Missing org or device parameter' },
         { status: 400 }
       )
     }
@@ -76,8 +85,15 @@ export async function POST(request: Request) {
       )
     }
 
-    const audioKey = `${sessionId}/${config.audioPath}`
-    const vttKey = `${sessionId}/${config.vttPath}`
+    const prefix = await findSessionPrefix(org, device, sessionId)
+    if (!prefix) {
+      return NextResponse.json(
+        { error: 'Session not found' },
+        { status: 404 }
+      )
+    }
+    const audioKey = `${prefix}/${config.audioPath}`
+    const vttKey = `${prefix}/${config.vttPath}`
 
     // Download the audio file from S3
     const audioBuffer = await getFileBuffer(audioKey)
@@ -95,7 +111,7 @@ export async function POST(request: Request) {
     // IMPORTANT: Include BOTH 'segment' and 'word' granularities
     // This fixes a known Whisper bug where first segment always starts at 0.00
     // See: https://community.openai.com/t/whisper-segment-start-times/718953
-    const transcription = await openai.audio.transcriptions.create({
+    const transcription = await getOpenAIClient().audio.transcriptions.create({
       file: audioFile,
       model: 'whisper-1',
       language: 'es',

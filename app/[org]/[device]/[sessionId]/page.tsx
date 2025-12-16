@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { use } from 'react'
+import Breadcrumb from '@/components/Breadcrumb'
 
 interface SessionFile {
   key: string
@@ -18,7 +19,15 @@ interface SessionMetadata {
 }
 
 interface Session {
-  id: string
+  id: string           // Display ID: sess_xxxxx
+  fullId: string       // Folder name: HH-MM-SS_sess_xxxxx (used in URLs)
+  org: string
+  device: string
+  year: string
+  month: string
+  day: string
+  time: string
+  prefix: string
   timestamp: string
   files: SessionFile[]
   hasScreenVideo: boolean
@@ -98,13 +107,11 @@ interface TranscriptionState {
   audioClean: { loading: boolean; cues: SubtitleCue[] }
 }
 
-// Parse WebVTT content into cues
 function parseVtt(vttContent: string): SubtitleCue[] {
   const cues: SubtitleCue[] = []
   const lines = vttContent.split('\n')
   let i = 0
 
-  // Skip header
   while (i < lines.length && !lines[i].includes('-->')) {
     i++
   }
@@ -117,11 +124,9 @@ function parseVtt(vttContent: string): SubtitleCue[] {
       const start = parseVttTimestamp(startStr)
       const end = parseVttTimestamp(endStr)
 
-      // Collect text lines until empty line or next timestamp
       const textLines: string[] = []
       i++
       while (i < lines.length && lines[i].trim() && !lines[i].includes('-->')) {
-        // Skip numeric cue identifiers
         if (!/^\d+$/.test(lines[i].trim())) {
           textLines.push(lines[i].trim())
         }
@@ -154,7 +159,6 @@ function parseVttTimestamp(timestamp: string): number {
   return totalSeconds
 }
 
-// Convert linear amplitude to decibels
 function toDb(value: number): number {
   if (value <= 0) return -Infinity
   return 20 * Math.log10(value)
@@ -183,7 +187,6 @@ function AudioWaveformWithStats({
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  // Load and analyze audio via proxy (bypasses CORS)
   useEffect(() => {
     if (!fileKey) return
 
@@ -192,7 +195,6 @@ function AudioWaveformWithStats({
     setLoading(true)
     setError(null)
 
-    // Use proxy endpoint to bypass CORS
     const proxyUrl = `/api/proxy?key=${encodeURIComponent(fileKey)}`
 
     fetch(proxyUrl)
@@ -203,11 +205,10 @@ function AudioWaveformWithStats({
       .then(buffer => audioContext.decodeAudioData(buffer))
       .then(audioBuffer => {
         const rawData = audioBuffer.getChannelData(0)
-        const samples = 200 // Number of bars in waveform
+        const samples = 200
         const blockSize = Math.floor(rawData.length / samples)
         const peaks: number[] = []
 
-        // Calculate waveform peaks
         for (let i = 0; i < samples; i++) {
           let sum = 0
           for (let j = 0; j < blockSize; j++) {
@@ -216,12 +217,11 @@ function AudioWaveformWithStats({
           peaks.push(sum / blockSize)
         }
 
-        // Calculate audio statistics
         let peak = 0
         let sumSquares = 0
         let silentSamples = 0
         let clippingSamples = 0
-        const silenceThreshold = 0.01 // -40dB roughly
+        const silenceThreshold = 0.01
 
         for (let i = 0; i < rawData.length; i++) {
           const absValue = Math.abs(rawData[i])
@@ -245,7 +245,6 @@ function AudioWaveformWithStats({
           channels: audioBuffer.numberOfChannels,
         }
 
-        // Normalize peaks
         const maxPeak = Math.max(...peaks)
         const normalizedPeaks = peaks.map(p => p / maxPeak)
 
@@ -262,7 +261,6 @@ function AudioWaveformWithStats({
       })
   }, [fileKey])
 
-  // Draw waveform
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas || !waveformData) return
@@ -276,27 +274,22 @@ function AudioWaveformWithStats({
     const barWidth = width / peaks.length
     const playheadPosition = totalDuration > 0 ? (currentTime / totalDuration) * width : 0
 
-    // Clear canvas
     ctx.fillStyle = '#18181b'
     ctx.fillRect(0, 0, width, height)
 
-    // Draw bars
     peaks.forEach((peak, i) => {
       const x = i * barWidth
       const barHeight = peak * height * 0.85
       const y = (height - barHeight) / 2
 
-      // Color bars based on playhead position
       ctx.fillStyle = x < playheadPosition ? color : '#3f3f46'
       ctx.fillRect(x, y, barWidth - 1, barHeight)
     })
 
-    // Draw playhead
     ctx.fillStyle = '#ffffff'
     ctx.fillRect(playheadPosition - 1, 0, 2, height)
   }, [waveformData, currentTime, totalDuration, color])
 
-  // Handle click to seek
   const handleClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current
     if (!canvas || !totalDuration) return
@@ -413,17 +406,14 @@ function AudioComparison({
   const [soloPlaying, setSoloPlaying] = useState<'clean' | 'raw' | null>(null)
   const [soloTime, setSoloTime] = useState(0)
 
-  // Handle solo play/pause
   const toggleSolo = (track: 'clean' | 'raw') => {
     const audioRef = track === 'clean' ? cleanAudioRef : rawAudioRef
     const otherRef = track === 'clean' ? rawAudioRef : cleanAudioRef
 
     if (soloPlaying === track) {
-      // Pause current
       audioRef.current?.pause()
       setSoloPlaying(null)
     } else {
-      // Stop other and play this one
       otherRef.current?.pause()
       if (audioRef.current) {
         audioRef.current.currentTime = currentTime
@@ -433,7 +423,6 @@ function AudioComparison({
     }
   }
 
-  // Sync time display
   const handleTimeUpdate = (track: 'clean' | 'raw') => {
     const audioRef = track === 'clean' ? cleanAudioRef : rawAudioRef
     if (audioRef.current && soloPlaying === track) {
@@ -441,20 +430,16 @@ function AudioComparison({
     }
   }
 
-  // Handle audio end
   const handleEnded = () => {
     setSoloPlaying(null)
   }
 
-  // Seek and play - clicking on waveform seeks to that position and starts playing
   const handleSeekAndPlay = (track: 'clean' | 'raw', time: number) => {
     const audioRef = track === 'clean' ? cleanAudioRef : rawAudioRef
     const otherRef = track === 'clean' ? rawAudioRef : cleanAudioRef
 
-    // Stop the other track
     otherRef.current?.pause()
 
-    // Seek and play this track
     if (audioRef.current) {
       audioRef.current.currentTime = time
       audioRef.current.play()
@@ -480,7 +465,6 @@ function AudioComparison({
               Solo
             </span>
           )}
-          {/* Audio source toggle for main replay */}
           <div className="flex items-center gap-2">
             <span className="text-xs text-zinc-500">Replay:</span>
             <div className="flex rounded overflow-hidden border border-zinc-700">
@@ -613,7 +597,6 @@ function AudioComparison({
           Click on waveform to seek and play. Compare to hear noise reduction effect.
         </div>
       )}
-      {/* Hidden audio elements for solo playback */}
       {cleanUrl && (
         <audio
           ref={cleanAudioRef}
@@ -650,8 +633,11 @@ function formatTime(seconds: number): string {
   return `${mins}:${secs.toString().padStart(2, '0')}`
 }
 
-export default function SessionPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = use(params)
+export default function SessionPage({ params }: { params: Promise<{ org: string; device: string; sessionId: string }> }) {
+  const { org, device, sessionId } = use(params)
+  const decodedOrg = decodeURIComponent(org)
+  const decodedDevice = decodeURIComponent(device)
+
   const router = useRouter()
   const [session, setSession] = useState<Session | null>(null)
   const [loading, setLoading] = useState(true)
@@ -668,12 +654,10 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
   const [screenVolume, setScreenVolume] = useState(0.5)
   const [micVolume, setMicVolume] = useState(1)
 
-  // Delete confirmation state
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [deleteConfirmText, setDeleteConfirmText] = useState('')
   const [isDeleting, setIsDeleting] = useState(false)
 
-  // Transcription state
   const [transcriptions, setTranscriptions] = useState<TranscriptionState>({
     screenAudio: { loading: false, cues: [] },
     audioRaw: { loading: false, cues: [] },
@@ -686,14 +670,10 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
   const micAudioRef = useRef<HTMLAudioElement>(null)
   const isSeeking = useRef(false)
 
-  // Store presigned URLs for downloads
   const [fileUrls, setFileUrls] = useState<Record<string, string>>({})
-
-  // Duration analysis
   const [fileDurations, setFileDurations] = useState<FileDuration[]>([])
   const [analyzingDurations, setAnalyzingDurations] = useState(false)
 
-  // Notes state
   const [notes, setNotes] = useState<Note[]>([])
   const [showNoteInput, setShowNoteInput] = useState(false)
   const [noteInputResource, setNoteInputResource] = useState<NoteResource>('global')
@@ -702,19 +682,20 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
   const [editingNote, setEditingNote] = useState<Note | null>(null)
   const [savingNote, setSavingNote] = useState(false)
 
-  // Fetch session data
+  // Helper to build API URL with org/device params
+  const apiParams = `org=${encodeURIComponent(decodedOrg)}&device=${encodeURIComponent(decodedDevice)}`
+
   useEffect(() => {
     async function fetchSession() {
       try {
-        const res = await fetch('/api/sessions')
+        const res = await fetch(`/api/sessions?${apiParams}`)
         if (!res.ok) throw new Error('Failed to fetch sessions')
         const data = await res.json()
-        const found = data.sessions.find((s: Session) => s.id === id)
+        const found = data.sessions.find((s: Session) => s.fullId === sessionId)
         if (!found) throw new Error('Session not found')
 
-        // Also fetch metadata for this session
         try {
-          const metadataRes = await fetch(`/api/sessions/${id}/metadata`)
+          const metadataRes = await fetch(`/api/sessions/${sessionId}/metadata?${apiParams}`)
           if (metadataRes.ok) {
             const metadata = await metadataRes.json()
             found.metadata = metadata
@@ -731,9 +712,8 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
       }
     }
     fetchSession()
-  }, [id])
+  }, [sessionId, apiParams])
 
-  // Generate presigned URLs for media files
   useEffect(() => {
     if (!session) return
 
@@ -793,17 +773,13 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
       setMediaKeys(keys)
       setFileUrls(downloadUrls)
 
-      // Load existing transcriptions - store VTT URLs for native track elements
       const vttUrlsObj: VttUrls = {}
       const cacheBuster = Date.now()
       for (const { type, key } of transcriptionFiles) {
         try {
-          // Add cache-busting timestamp to ensure fresh content
           const proxyUrl = `/api/proxy?key=${encodeURIComponent(key)}&t=${cacheBuster}`
-          // Store the URL for native track element
           vttUrlsObj[type] = proxyUrl
 
-          // Also load cues for the transcript box - force no-cache
           const res = await fetch(proxyUrl, { cache: 'no-store' })
           if (res.ok) {
             const vttContent = await res.text()
@@ -823,13 +799,11 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
     loadUrls()
   }, [session])
 
-  // Analyze durations of all media files
   useEffect(() => {
     if (Object.keys(fileUrls).length === 0 || !session) return
 
     setAnalyzingDurations(true)
 
-    // Initialize durations state - exclude transcription files (VTT)
     const isMediaFile = (type: string) => !type.startsWith('transcription-') && type !== 'unknown'
     const initialDurations: FileDuration[] = session.files
       .filter(f => isMediaFile(f.type))
@@ -841,7 +815,6 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
       }))
     setFileDurations(initialDurations)
 
-    // Analyze each file
     session.files.forEach((file) => {
       const url = fileUrls[file.key]
       if (!url || !isMediaFile(file.type)) return
@@ -878,12 +851,10 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
       element.src = url
     })
 
-    // Mark analysis complete after a timeout (in case some files fail silently)
     const timeout = setTimeout(() => setAnalyzingDurations(false), 10000)
     return () => clearTimeout(timeout)
   }, [fileUrls, session])
 
-  // Sync all media to the same time
   const syncAllMedia = useCallback((time: number) => {
     if (screenVideoRef.current) {
       screenVideoRef.current.currentTime = time
@@ -899,7 +870,6 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
     }
   }, [])
 
-  // Play/pause all media
   const togglePlayPause = useCallback(() => {
     const newIsPlaying = !isPlaying
 
@@ -918,7 +888,6 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
     setIsPlaying(newIsPlaying)
   }, [isPlaying])
 
-  // Handle seek
   const handleSeek = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const time = parseFloat(e.target.value)
     setCurrentTime(time)
@@ -929,7 +898,6 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
     }, 100)
   }, [syncAllMedia])
 
-  // Time update handler
   const handleTimeUpdate = useCallback(() => {
     if (isSeeking.current) return
     if (screenVideoRef.current) {
@@ -937,19 +905,16 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
     }
   }, [])
 
-  // Duration loaded handler
   const handleLoadedMetadata = useCallback(() => {
     if (screenVideoRef.current) {
       setDuration(screenVideoRef.current.duration)
     }
   }, [])
 
-  // Handle video end
   const handleEnded = useCallback(() => {
     setIsPlaying(false)
   }, [])
 
-  // Handle playback speed change
   const handleSpeedChange = useCallback((speed: number) => {
     setPlaybackSpeed(speed)
     if (screenVideoRef.current) screenVideoRef.current.playbackRate = speed
@@ -958,23 +923,19 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
     if (micAudioRef.current) micAudioRef.current.playbackRate = speed
   }, [])
 
-  // Handle screen audio volume change
   const handleScreenVolumeChange = useCallback((volume: number) => {
     setScreenVolume(volume)
     if (screenAudioRef.current) screenAudioRef.current.volume = volume
   }, [])
 
-  // Handle mic volume change
   const handleMicVolumeChange = useCallback((volume: number) => {
     setMicVolume(volume)
     if (micAudioRef.current) micAudioRef.current.volume = volume
   }, [])
 
-  // Get current mic audio URL and key based on selection
   const currentMicAudioUrl = audioSource === 'clean' ? mediaUrls.audioClean : mediaUrls.audioRaw
   const currentMicAudioKey = audioSource === 'clean' ? mediaKeys.audioClean : mediaKeys.audioRaw
 
-  // Set initial volumes when audio elements are ready
   useEffect(() => {
     if (screenAudioRef.current) {
       screenAudioRef.current.volume = screenVolume
@@ -989,23 +950,19 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
     }
   }, [currentMicAudioUrl, micVolume, playbackSpeed])
 
-  // Handle waveform seek
   const handleWaveformSeek = useCallback((time: number) => {
     setCurrentTime(time)
     syncAllMedia(time)
   }, [syncAllMedia])
 
-  // Enable subtitle tracks when VTT URLs change
   useEffect(() => {
     const video = screenVideoRef.current
     if (!video) return
 
-    // Wait a bit for tracks to load
     const timer = setTimeout(() => {
       const tracks = video.textTracks
       for (let i = 0; i < tracks.length; i++) {
         const track = tracks[i]
-        // Enable both screen audio and mic audio tracks
         if (track.label === 'Screen Audio (System)' ||
             track.label === 'Mic Audio (Clean)' ||
             track.label === 'Mic Audio (Raw)') {
@@ -1017,7 +974,6 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
     return () => clearTimeout(timer)
   }, [vttUrls.screenAudio, vttUrls.audioClean, vttUrls.audioRaw])
 
-  // Keyboard controls
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
       if (e.code === 'Space') {
@@ -1040,26 +996,24 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [togglePlayPause, currentTime, duration, syncAllMedia])
 
-  // Handle delete session
   const handleDelete = useCallback(async () => {
-    if (deleteConfirmText !== id) return
+    if (deleteConfirmText !== sessionId) return
 
     setIsDeleting(true)
     try {
-      const res = await fetch(`/api/sessions/${id}`, { method: 'DELETE' })
+      const res = await fetch(`/api/sessions/${sessionId}?${apiParams}`, { method: 'DELETE' })
       if (!res.ok) {
         const data = await res.json()
         throw new Error(data.error || 'Failed to delete')
       }
-      router.push('/')
+      router.push(`/${encodeURIComponent(decodedOrg)}/${encodeURIComponent(decodedDevice)}`)
     } catch (err) {
       setError(String(err))
       setIsDeleting(false)
       setShowDeleteConfirm(false)
     }
-  }, [deleteConfirmText, id, router])
+  }, [deleteConfirmText, sessionId, router, apiParams, decodedOrg, decodedDevice])
 
-  // Generate transcription for an audio type
   const generateTranscription = useCallback(async (audioType: 'screen-audio' | 'audio-raw' | 'audio-clean') => {
     const stateKey = audioType === 'screen-audio' ? 'screenAudio' : audioType === 'audio-raw' ? 'audioRaw' : 'audioClean'
 
@@ -1072,7 +1026,7 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
       const res = await fetch('/api/transcribe', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sessionId: id, audioType }),
+        body: JSON.stringify({ sessionId, audioType, org: decodedOrg, device: decodedDevice }),
       })
 
       if (!res.ok) {
@@ -1082,11 +1036,9 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
 
       const data = await res.json()
 
-      // Fetch the newly created VTT file with cache-busting
       const vttKey = data.vttKey
       const proxyUrl = `/api/proxy?key=${encodeURIComponent(vttKey)}&t=${Date.now()}`
 
-      // Update VTT URL for native track element
       setVttUrls(prev => ({ ...prev, [stateKey]: proxyUrl }))
 
       const vttRes = await fetch(proxyUrl, { cache: 'no-store' })
@@ -1098,7 +1050,6 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
         [stateKey]: { loading: false, cues },
       }))
 
-      // Update session to reflect new transcription file
       if (session) {
         const newSession = { ...session }
         if (audioType === 'screen-audio') newSession.hasTranscriptionScreen = true
@@ -1114,18 +1065,16 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
       }))
       alert(`Transcription failed: ${err instanceof Error ? err.message : 'Unknown error'}`)
     }
-  }, [id, session])
+  }, [sessionId, session, decodedOrg, decodedDevice])
 
-  // Fetch notes
   useEffect(() => {
-    if (!id) return
-    fetch(`/api/sessions/${id}/notes`)
+    if (!sessionId) return
+    fetch(`/api/sessions/${sessionId}/notes?${apiParams}`)
       .then(res => res.json())
       .then(data => setNotes(data.notes || []))
       .catch(err => console.error('Failed to fetch notes:', err))
-  }, [id])
+  }, [sessionId, apiParams])
 
-  // Open note input modal
   const openNoteInput = useCallback((resource: NoteResource) => {
     setNoteInputResource(resource)
     setNoteInputTimestamp(currentTime)
@@ -1134,7 +1083,6 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
     setShowNoteInput(true)
   }, [currentTime])
 
-  // Open note for editing
   const openNoteEdit = useCallback((note: Note) => {
     setNoteInputResource(note.resource)
     setNoteInputTimestamp(note.timestamp)
@@ -1143,15 +1091,13 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
     setShowNoteInput(true)
   }, [])
 
-  // Save note (add or update)
   const saveNote = useCallback(async () => {
     if (!noteInputContent.trim()) return
 
     setSavingNote(true)
     try {
       if (editingNote) {
-        // Update existing note
-        const res = await fetch(`/api/sessions/${id}/notes`, {
+        const res = await fetch(`/api/sessions/${sessionId}/notes?${apiParams}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -1166,8 +1112,7 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
           setNotes(prev => prev.map(n => n.id === editingNote.id ? data.note : n))
         }
       } else {
-        // Add new note
-        const res = await fetch(`/api/sessions/${id}/notes`, {
+        const res = await fetch(`/api/sessions/${sessionId}/notes?${apiParams}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -1189,12 +1134,11 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
     } finally {
       setSavingNote(false)
     }
-  }, [id, noteInputContent, noteInputTimestamp, noteInputResource, editingNote])
+  }, [sessionId, noteInputContent, noteInputTimestamp, noteInputResource, editingNote, apiParams])
 
-  // Delete note
   const handleDeleteNote = useCallback(async (noteId: string) => {
     try {
-      const res = await fetch(`/api/sessions/${id}/notes?noteId=${noteId}`, {
+      const res = await fetch(`/api/sessions/${sessionId}/notes?${apiParams}&noteId=${noteId}`, {
         method: 'DELETE',
       })
       if (res.ok) {
@@ -1203,9 +1147,8 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
     } catch (err) {
       console.error('Failed to delete note:', err)
     }
-  }, [id])
+  }, [sessionId, apiParams])
 
-  // Jump to note timestamp
   const jumpToNote = useCallback((note: Note) => {
     if (screenVideoRef.current) {
       screenVideoRef.current.currentTime = note.timestamp
@@ -1213,14 +1156,12 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
     syncAllMedia(note.timestamp)
   }, [syncAllMedia])
 
-  // Format timestamp for display
   const formatTimestamp = (seconds: number) => {
     const mins = Math.floor(seconds / 60)
     const secs = Math.floor(seconds % 60)
     return `${mins}:${secs.toString().padStart(2, '0')}`
   }
 
-  // Get resource label
   const getResourceLabel = (resource: NoteResource) => {
     const labels: Record<NoteResource, string> = {
       'global': 'Global',
@@ -1233,6 +1174,8 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
     return labels[resource]
   }
 
+  const backUrl = `/${encodeURIComponent(decodedOrg)}/${encodeURIComponent(decodedDevice)}`
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-[calc(100vh-80px)]">
@@ -1243,32 +1186,46 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
 
   if (error || !session) {
     return (
-      <div className="flex flex-col items-center justify-center h-[calc(100vh-80px)] gap-4">
-        <div className="text-red-400">Error: {error || 'Session not found'}</div>
-        <Link href="/" className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 rounded-lg">
-          ← Back to Sessions
-        </Link>
+      <div className="p-6">
+        <Breadcrumb items={[
+          { label: 'Organizations', href: '/' },
+          { label: decodedOrg, href: `/${encodeURIComponent(decodedOrg)}` },
+          { label: decodedDevice, href: backUrl },
+          { label: decodeURIComponent(sessionId) }
+        ]} />
+        <div className="flex flex-col items-center justify-center h-[calc(100vh-200px)] gap-4">
+          <div className="text-red-400">Error: {error || 'Session not found'}</div>
+          <Link href={backUrl} className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 rounded-lg">
+            Back to Sessions
+          </Link>
+        </div>
       </div>
     )
   }
 
   return (
     <div className="p-6">
+      <Breadcrumb items={[
+        { label: 'Organizations', href: '/' },
+        { label: decodedOrg, href: `/${encodeURIComponent(decodedOrg)}` },
+        { label: decodedDevice, href: backUrl },
+        { label: session.id }
+      ]} />
+
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-4">
           <Link
-            href="/"
+            href={backUrl}
             className="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 rounded-lg text-sm"
           >
             ← Back
           </Link>
-          {/* Favorite button */}
           <button
             onClick={async () => {
               const newFavorite = !session.metadata?.favorite
               try {
-                const res = await fetch(`/api/sessions/${id}/metadata`, {
+                const res = await fetch(`/api/sessions/${sessionId}/metadata?${apiParams}`, {
                   method: 'PUT',
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({ favorite: newFavorite }),
@@ -1294,10 +1251,9 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
           <div>
             <h2 className="text-lg font-mono">{session.id}</h2>
             <p className="text-sm text-zinc-400">
-              {new Date(session.timestamp).toLocaleString()} · {formatBytes(session.totalSize)}
+              {session.year}-{session.month}-{session.day} {session.time.replace(/-/g, ':')} · {formatBytes(session.totalSize)}
             </p>
           </div>
-          {/* Score selector */}
           <div className="flex items-center gap-1 ml-2">
             {[1, 2, 3, 4, 5].map((n) => (
               <button
@@ -1305,7 +1261,7 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
                 onClick={async () => {
                   const newScore = n === session.metadata?.score ? null : n
                   try {
-                    const res = await fetch(`/api/sessions/${id}/metadata`, {
+                    const res = await fetch(`/api/sessions/${sessionId}/metadata?${apiParams}`, {
                       method: 'PUT',
                       headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify({ score: newScore }),
@@ -1332,7 +1288,6 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
           </div>
         </div>
 
-        {/* Delete button */}
         <button
           onClick={() => setShowDeleteConfirm(true)}
           className="px-3 py-1.5 text-sm rounded-lg bg-red-600/20 text-red-400 hover:bg-red-600/30 border border-red-600/30"
@@ -1352,7 +1307,7 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
             <p className="text-sm text-zinc-400 mb-2">
               Type the session ID to confirm:
             </p>
-            <p className="font-mono text-sm text-zinc-500 mb-2 select-all">{id}</p>
+            <p className="font-mono text-sm text-zinc-500 mb-2 select-all">{sessionId}</p>
             <input
               type="text"
               value={deleteConfirmText}
@@ -1374,7 +1329,7 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
               </button>
               <button
                 onClick={handleDelete}
-                disabled={deleteConfirmText !== id || isDeleting}
+                disabled={deleteConfirmText !== sessionId || isDeleting}
                 className="px-4 py-2 bg-red-600 hover:bg-red-500 disabled:bg-red-600/50 disabled:cursor-not-allowed rounded-lg text-sm text-white"
               >
                 {isDeleting ? 'Deleting...' : 'Delete Permanently'}
@@ -1463,9 +1418,7 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
 
       {/* Video Grid */}
       <div className="relative mb-4">
-        {/* Main screen video */}
         <div className="bg-black rounded-lg overflow-hidden aspect-video relative group/video">
-          {/* Add Note button on video */}
           <button
             onClick={() => openNoteInput('screen-video')}
             className="absolute top-2 left-2 z-10 p-1.5 rounded bg-black/60 text-white/80 hover:text-white hover:bg-black/80 opacity-0 group-hover/video:opacity-100 transition-opacity flex items-center gap-1"
@@ -1487,7 +1440,6 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
               muted
               playsInline
             >
-              {/* Native VTT subtitle tracks - browser handles timing automatically */}
               {vttUrls.screenAudio && (
                 <track
                   key={vttUrls.screenAudio}
@@ -1524,7 +1476,7 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
           )}
         </div>
 
-        {/* Transcript box - above camera */}
+        {/* Transcript box */}
         {(session.hasScreenAudio || session.hasAudioRaw || session.hasAudioClean) && (
           <div className="absolute bottom-52 right-4 w-72 max-h-48 bg-black/90 rounded-lg border border-zinc-700 overflow-hidden">
             <div className="p-2 border-b border-zinc-700 flex justify-between items-center gap-2">
@@ -1565,7 +1517,6 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
             </div>
             <div className="p-2 overflow-y-auto max-h-36 space-y-1">
               {(() => {
-                // Merge screen audio and mic audio cues into conversation view
                 const micCues = audioSource === 'clean' ? transcriptions.audioClean.cues : transcriptions.audioRaw.cues
                 const allCues = [
                   ...transcriptions.screenAudio.cues.map(cue => ({ ...cue, source: 'screen' as const })),
@@ -1604,7 +1555,7 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
           </div>
         )}
 
-        {/* Camera overlay (picture-in-picture style) */}
+        {/* Camera overlay */}
         {showCamera && mediaUrls.cameraVideo && (
           <div className="absolute bottom-4 right-4 w-64 aspect-video bg-black rounded-lg overflow-hidden border-2 border-zinc-700 shadow-xl group">
             <video
@@ -1635,7 +1586,6 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
           </div>
         )}
 
-        {/* Show camera button when hidden */}
         {!showCamera && mediaUrls.cameraVideo && (
           <button
             onClick={() => setShowCamera(true)}
@@ -1648,7 +1598,6 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
           </button>
         )}
 
-        {/* No camera indicator */}
         {showCamera && !mediaUrls.cameraVideo && (
           <div className="absolute bottom-4 right-4 w-64 aspect-video bg-zinc-900 rounded-lg overflow-hidden border-2 border-zinc-700 flex items-center justify-center group">
             <span className="text-zinc-500 text-sm">No camera</span>
@@ -1665,7 +1614,7 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
         )}
       </div>
 
-      {/* Audio elements (hidden) */}
+      {/* Audio elements */}
       {mediaUrls.screenAudio && (
         <audio ref={screenAudioRef} src={mediaUrls.screenAudio} preload="auto" />
       )}
@@ -1676,7 +1625,6 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
       {/* Controls */}
       <div className="bg-zinc-900 rounded-lg p-4 border border-zinc-800">
         <div className="flex items-center gap-4">
-          {/* Play/Pause button */}
           <button
             onClick={togglePlayPause}
             className="w-12 h-12 flex items-center justify-center bg-zinc-100 text-zinc-900 rounded-full hover:bg-white transition-colors"
@@ -1692,12 +1640,10 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
             )}
           </button>
 
-          {/* Time display */}
           <div className="text-sm font-mono text-zinc-400 w-24">
             {formatTime(currentTime)} / {formatTime(duration)}
           </div>
 
-          {/* Seek bar */}
           <input
             type="range"
             min={0}
@@ -1708,9 +1654,7 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
           />
         </div>
 
-        {/* Speed and Volume Controls */}
         <div className="mt-4 pt-4 border-t border-zinc-700 grid grid-cols-3 gap-6">
-          {/* Playback Speed */}
           <div>
             <div className="text-xs text-zinc-400 mb-2">Playback Speed</div>
             <div className="flex gap-1">
@@ -1730,7 +1674,6 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
             </div>
           </div>
 
-          {/* Screen Audio Volume */}
           <div>
             <div className="text-xs text-zinc-400 mb-2 flex items-center gap-2">
               <span>Screen Audio</span>
@@ -1747,7 +1690,6 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
             />
           </div>
 
-          {/* Mic Audio Volume */}
           <div>
             <div className="text-xs text-zinc-400 mb-2 flex items-center gap-2">
               <span>Mic Audio ({audioSource})</span>
@@ -1765,7 +1707,6 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
           </div>
         </div>
 
-        {/* Keyboard shortcuts hint */}
         <div className="mt-3 text-xs text-zinc-500 text-center">
           Space: Play/Pause · ← →: Skip 5s
         </div>
@@ -1773,7 +1714,6 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
 
       {/* Audio Analysis */}
       <div className="mt-4 grid grid-cols-2 gap-4">
-        {/* Screen Audio */}
         {mediaKeys.screenAudio && (
           <div className="bg-zinc-900 rounded-lg p-4 border border-zinc-800">
             <div className="flex items-center justify-between mb-3">
@@ -1799,7 +1739,6 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
           </div>
         )}
 
-        {/* Mic Audio Comparison */}
         <AudioComparison
           cleanKey={mediaKeys.audioClean}
           rawKey={mediaKeys.audioRaw}
@@ -1888,9 +1827,8 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
         )}
       </div>
 
-      {/* Session Files & Duration Analysis - Side by Side */}
+      {/* Session Files & Duration Analysis */}
       <div className="mt-6 grid grid-cols-2 gap-4">
-        {/* File details */}
         <div className="bg-zinc-900 rounded-lg p-4 border border-zinc-800">
           <h3 className="text-sm font-medium mb-3">Session Files</h3>
           <div className="space-y-2">
@@ -1902,7 +1840,7 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
                   key={file.key}
                   className="flex items-center justify-between text-sm py-2 border-b border-zinc-800 last:border-0"
                 >
-                  <span className="font-mono text-zinc-400 text-xs">{file.key.split('/').slice(1).join('/')}</span>
+                  <span className="font-mono text-zinc-400 text-xs">{file.key.split('/').slice(6).join('/')}</span>
                   <div className="flex items-center gap-3">
                     <span className="text-zinc-500 text-xs">{formatBytes(file.size)}</span>
                     {url ? (
@@ -1927,7 +1865,6 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
           </div>
         </div>
 
-        {/* Duration Analysis */}
         {fileDurations.length > 0 && (
           <div className="bg-zinc-900 rounded-lg p-4 border border-zinc-800">
             <h3 className="text-sm font-medium mb-3 flex items-center gap-2">
@@ -1944,11 +1881,10 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
               const avgDuration = durations.length > 0
                 ? durations.reduce((sum, d) => sum + (d.duration || 0), 0) / durations.length
                 : 0
-              const hasIrregularity = maxDuration - minDuration > 5 // More than 5 seconds difference
+              const hasIrregularity = maxDuration - minDuration > 5
 
               return (
                 <>
-                  {/* Summary */}
                   <div className={`mb-4 p-3 rounded-lg ${hasIrregularity ? 'bg-amber-500/10 border border-amber-500/30' : 'bg-emerald-500/10 border border-emerald-500/30'}`}>
                     <div className="flex items-center gap-2 mb-1">
                       <span className={`text-sm font-medium ${hasIrregularity ? 'text-amber-400' : 'text-emerald-400'}`}>
@@ -1970,7 +1906,6 @@ export default function SessionPage({ params }: { params: Promise<{ id: string }
                     </div>
                   </div>
 
-                  {/* Duration bars */}
                   <div className="space-y-2">
                     {fileDurations.map((file) => {
                       const label = file.type.replace('-', ' ').replace(/\b\w/g, l => l.toUpperCase())
