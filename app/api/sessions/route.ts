@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { listSessions } from '@/lib/s3'
+import { listSessions, getOrgMetadata, getDeviceMetadata } from '@/lib/s3'
 
 export const dynamic = 'force-dynamic'
 
@@ -16,8 +16,18 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    const sessions = await listSessions(org, device)
-    return NextResponse.json({ sessions })
+    // Fetch sessions and metadata in parallel
+    const [sessions, orgMetadata, deviceMetadata] = await Promise.all([
+      listSessions(org, device),
+      getOrgMetadata(org),
+      getDeviceMetadata(org, device),
+    ])
+
+    return NextResponse.json({
+      sessions,
+      orgName: orgMetadata?.name,
+      deviceName: deviceMetadata?.name,
+    })
   } catch (error) {
     console.error('Failed to list sessions:', error)
     return NextResponse.json(
