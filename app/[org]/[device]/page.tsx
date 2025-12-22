@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import Link from 'next/link'
 import { use } from 'react'
 import Breadcrumb from '@/components/Breadcrumb'
+import SessionAnalytics from '@/components/SessionAnalytics'
 
 interface SessionFile {
   key: string
@@ -62,13 +63,6 @@ function formatDuration(seconds: number): string {
   return `${mins}:${secs.toString().padStart(2, '0')}`
 }
 
-function getDateKey(dateString: string): string {
-  const date = new Date(dateString)
-  const year = date.getFullYear()
-  const month = String(date.getMonth() + 1).padStart(2, '0')
-  const day = String(date.getDate()).padStart(2, '0')
-  return `${year}-${month}-${day}`
-}
 
 function isSessionComplete(session: Session): boolean {
   return (
@@ -80,184 +74,6 @@ function isSessionComplete(session: Session): boolean {
   )
 }
 
-interface HourStats {
-  hour: number
-  label: string
-  count: number
-  complete: number
-  incomplete: number
-}
-
-function SessionsPerHourChart({ sessions }: { sessions: Session[] }) {
-  const [selectedDate, setSelectedDate] = useState(() => {
-    const today = new Date()
-    return getDateKey(today.toISOString())
-  })
-
-  const earliestDate = useMemo(() => {
-    if (sessions.length === 0) return selectedDate
-    const dates = sessions.map((s) => getDateKey(s.timestamp))
-    return dates.sort()[0]
-  }, [sessions, selectedDate])
-
-  const isToday = selectedDate === getDateKey(new Date().toISOString())
-  const canGoForward = !isToday
-  const canGoBack = selectedDate > earliestDate
-
-  const navigateDay = (direction: 'prev' | 'next') => {
-    const [year, month, day] = selectedDate.split('-').map(Number)
-    const current = new Date(year, month - 1, day)
-    current.setDate(current.getDate() + (direction === 'next' ? 1 : -1))
-    setSelectedDate(getDateKey(current.toISOString()))
-  }
-
-  const hourStats = useMemo(() => {
-    const hours: HourStats[] = []
-    for (let h = 0; h < 24; h++) {
-      hours.push({
-        hour: h,
-        label: h.toString().padStart(2, '0'),
-        count: 0,
-        complete: 0,
-        incomplete: 0,
-      })
-    }
-
-    for (const session of sessions) {
-      const sessionDate = getDateKey(session.timestamp)
-      if (sessionDate !== selectedDate) continue
-
-      const sessionHour = new Date(session.timestamp).getHours()
-      const hour = hours[sessionHour]
-      hour.count++
-      if (isSessionComplete(session)) {
-        hour.complete++
-      } else {
-        hour.incomplete++
-      }
-    }
-
-    return hours
-  }, [sessions, selectedDate])
-
-  const maxCount = Math.max(...hourStats.map((h) => h.count), 1)
-  const totalForDay = hourStats.reduce((sum, h) => sum + h.count, 0)
-
-  const displayDate = useMemo(() => {
-    const [year, month, day] = selectedDate.split('-').map(Number)
-    const date = new Date(year, month - 1, day)
-    const today = new Date()
-    const yesterday = new Date(today)
-    yesterday.setDate(yesterday.getDate() - 1)
-
-    if (selectedDate === getDateKey(today.toISOString())) return 'Today'
-    if (selectedDate === getDateKey(yesterday.toISOString())) return 'Yesterday'
-
-    return date.toLocaleDateString('en-US', {
-      weekday: 'short',
-      month: 'short',
-      day: 'numeric',
-    })
-  }, [selectedDate])
-
-  return (
-    <div className="bg-zinc-900 rounded-lg p-4 border border-zinc-800 mb-6">
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="text-sm font-medium text-zinc-300">Sessions by Hour</h3>
-        <div className="flex items-center gap-3">
-          <span className="text-xs text-zinc-500">
-            {totalForDay} session{totalForDay !== 1 ? 's' : ''}
-          </span>
-          <div className="flex items-center gap-1">
-            <button
-              onClick={() => navigateDay('prev')}
-              disabled={!canGoBack}
-              className="p-1 rounded bg-zinc-800 text-zinc-400 hover:bg-zinc-700 disabled:opacity-30 disabled:cursor-not-allowed"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-              </svg>
-            </button>
-            <span className="text-sm text-zinc-300 min-w-[100px] text-center font-medium">
-              {displayDate}
-            </span>
-            <button
-              onClick={() => navigateDay('next')}
-              disabled={!canGoForward}
-              className="p-1 rounded bg-zinc-800 text-zinc-400 hover:bg-zinc-700 disabled:opacity-30 disabled:cursor-not-allowed"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-              </svg>
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <div className="flex items-end gap-px h-28">
-        {hourStats.map((hour) => {
-          const heightPct = (hour.count / maxCount) * 100
-          const completeHeightPct = hour.count > 0 ? (hour.complete / hour.count) * heightPct : 0
-
-          return (
-            <div key={hour.hour} className="flex-1 flex flex-col items-center group relative">
-              {hour.count > 0 && (
-                <div className="absolute bottom-full mb-2 hidden group-hover:block z-10">
-                  <div className="bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs whitespace-nowrap">
-                    <div className="font-medium">{hour.label}:00 - {hour.label}:59</div>
-                    <div className="text-zinc-400">
-                      {hour.count} session{hour.count !== 1 ? 's' : ''}
-                      <span className="text-emerald-400 ml-1">
-                        ({hour.complete} complete)
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              <div className="w-full flex flex-col justify-end h-20">
-                {hour.count > 0 ? (
-                  <div
-                    className="w-full rounded-t transition-all relative overflow-hidden"
-                    style={{ height: `${heightPct}%`, minHeight: '4px' }}
-                  >
-                    <div
-                      className="absolute top-0 left-0 right-0 bg-amber-500/60"
-                      style={{ height: `${100 - (completeHeightPct / heightPct) * 100}%` }}
-                    />
-                    <div
-                      className="absolute bottom-0 left-0 right-0 bg-emerald-500"
-                      style={{ height: `${(completeHeightPct / heightPct) * 100}%` }}
-                    />
-                  </div>
-                ) : (
-                  <div className="w-full h-px bg-zinc-800" />
-                )}
-              </div>
-
-              <div className="text-[10px] text-zinc-600 mt-1 leading-none">
-                {hour.hour}
-              </div>
-            </div>
-          )
-        })}
-      </div>
-
-      <div className="flex items-center justify-end mt-2">
-        <div className="flex items-center gap-4 text-xs text-zinc-500">
-          <div className="flex items-center gap-1">
-            <div className="w-3 h-3 bg-emerald-500 rounded" />
-            <span>Complete</span>
-          </div>
-          <div className="flex items-center gap-1">
-            <div className="w-3 h-3 bg-amber-500/60 rounded" />
-            <span>Incomplete</span>
-          </div>
-        </div>
-      </div>
-    </div>
-  )
-}
 
 function FileIndicator({ present, label }: { present: boolean; label: string }) {
   return (
@@ -385,15 +201,50 @@ function ScoreSelector({
   )
 }
 
+// LocalStorage key for duration cache
+const DURATION_CACHE_KEY = 'recordings-viewer-duration-cache'
+const DURATION_CACHE_VERSION = 1
+
+interface DurationCache {
+  version: number
+  data: Record<string, number>
+}
+
+function loadDurationCache(): Record<string, number> {
+  if (typeof window === 'undefined') return {}
+  try {
+    const cached = localStorage.getItem(DURATION_CACHE_KEY)
+    if (!cached) return {}
+    const parsed: DurationCache = JSON.parse(cached)
+    if (parsed.version !== DURATION_CACHE_VERSION) return {}
+    return parsed.data || {}
+  } catch {
+    return {}
+  }
+}
+
+function saveDurationCache(data: Record<string, number>): void {
+  if (typeof window === 'undefined') return
+  try {
+    const cache: DurationCache = { version: DURATION_CACHE_VERSION, data }
+    localStorage.setItem(DURATION_CACHE_KEY, JSON.stringify(cache))
+  } catch {
+    // Ignore localStorage errors
+  }
+}
+
 export default function SessionsPage({ params }: { params: Promise<{ org: string; device: string }> }) {
   const { org, device } = use(params)
   const decodedOrg = decodeURIComponent(org)
   const decodedDevice = decodeURIComponent(device)
 
   const [sessions, setSessions] = useState<Session[]>([])
+  const [orgName, setOrgName] = useState<string | null>(null)
+  const [deviceName, setDeviceName] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [filter, setFilter] = useState<'all' | 'complete' | 'incomplete' | 'favorites'>('all')
+  const [dateFilter, setDateFilter] = useState<string | null>(null)
   const [metadataLoading, setMetadataLoading] = useState(false)
 
   const [currentPage, setCurrentPage] = useState(1)
@@ -406,8 +257,17 @@ export default function SessionsPage({ params }: { params: Promise<{ org: string
 
   const metadataFetchedRef = useRef<Set<string>>(new Set())
 
-  const [durations, setDurations] = useState<Record<string, number>>({})
+  // Initialize durations from cache
+  const [durations, setDurations] = useState<Record<string, number>>(() => loadDurationCache())
   const durationFetchedRef = useRef<Set<string>>(new Set())
+
+  // Notes counts (not cached - always fetch fresh)
+  const [noteCounts, setNoteCounts] = useState<Record<string, number>>({})
+  const [noteCountsLoading, setNoteCountsLoading] = useState<Set<string>>(new Set())
+
+  // Display names (fallback to IDs if no name)
+  const orgDisplayName = orgName || decodedOrg
+  const deviceDisplayName = deviceName || decodedDevice
 
   const fetchSessions = useCallback(async (showFullLoading = true) => {
     try {
@@ -420,6 +280,10 @@ export default function SessionsPage({ params }: { params: Promise<{ org: string
       if (!res.ok) throw new Error('Failed to fetch sessions')
       const data = await res.json()
       const newSessions = data.sessions as Session[]
+
+      // Update org/device names from metadata
+      if (data.orgName) setOrgName(data.orgName)
+      if (data.deviceName) setDeviceName(data.deviceName)
 
       setSessions(prev => {
         const metadataMap = new Map(prev.map(s => [s.fullId, s.metadata]))
@@ -464,17 +328,24 @@ export default function SessionsPage({ params }: { params: Promise<{ org: string
 
   const filteredSessions = useMemo(() => {
     return sessions.filter((session) => {
+      // Apply date filter first
+      if (dateFilter) {
+        const sessionDate = `${session.year}-${session.month}-${session.day}`
+        if (sessionDate !== dateFilter) return false
+      }
+
+      // Then apply status filter
       const isComplete = isSessionComplete(session)
       if (filter === 'complete') return isComplete
       if (filter === 'incomplete') return !isComplete
       if (filter === 'favorites') return session.metadata?.favorite === true
       return true
     })
-  }, [sessions, filter])
+  }, [sessions, filter, dateFilter])
 
   useEffect(() => {
     setCurrentPage(1)
-  }, [filter])
+  }, [filter, dateFilter])
 
   const totalPages = Math.ceil(filteredSessions.length / itemsPerPage)
   const startIndex = (currentPage - 1) * itemsPerPage
@@ -519,8 +390,9 @@ export default function SessionsPage({ params }: { params: Promise<{ org: string
   useEffect(() => {
     if (paginatedSessions.length === 0 || loading) return
 
+    // Filter out sessions that already have duration in state (includes cached)
     const sessionsToFetch = paginatedSessions.filter(
-      s => s.hasScreenVideo && !durationFetchedRef.current.has(s.fullId)
+      s => s.hasScreenVideo && !durations[s.fullId] && !durationFetchedRef.current.has(s.fullId)
     )
     if (sessionsToFetch.length === 0) return
 
@@ -538,7 +410,12 @@ export default function SessionsPage({ params }: { params: Promise<{ org: string
 
         video.onloadedmetadata = () => {
           if (video.duration && isFinite(video.duration)) {
-            setDurations(prev => ({ ...prev, [session.fullId]: video.duration }))
+            setDurations(prev => {
+              const newDurations = { ...prev, [session.fullId]: video.duration }
+              // Save to localStorage cache
+              saveDurationCache(newDurations)
+              return newDurations
+            })
           }
           video.remove()
         }
@@ -551,6 +428,51 @@ export default function SessionsPage({ params }: { params: Promise<{ org: string
         console.error(`Failed to fetch video URL for ${session.fullId}:`, err)
       }
     })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paginatedSessions.map(s => s.fullId).join(','), loading, decodedOrg, decodedDevice, durations])
+
+  // Fetch notes counts for visible sessions (not cached - always fresh)
+  useEffect(() => {
+    if (paginatedSessions.length === 0 || loading) return
+
+    // Get session IDs that we don't have counts for yet
+    const sessionsToFetch = paginatedSessions.filter(
+      s => noteCounts[s.fullId] === undefined && !noteCountsLoading.has(s.fullId)
+    )
+    if (sessionsToFetch.length === 0) return
+
+    const idsToFetch = sessionsToFetch.map(s => s.fullId)
+
+    // Mark as loading
+    setNoteCountsLoading(prev => {
+      const next = new Set(prev)
+      idsToFetch.forEach(id => next.add(id))
+      return next
+    })
+
+    // Fetch counts in one batch request
+    const fetchNoteCounts = async () => {
+      try {
+        const res = await fetch(
+          `/api/sessions/notes-count?org=${encodeURIComponent(decodedOrg)}&device=${encodeURIComponent(decodedDevice)}&ids=${idsToFetch.join(',')}`
+        )
+        if (res.ok) {
+          const data = await res.json()
+          setNoteCounts(prev => ({ ...prev, ...data.counts }))
+        }
+      } catch (err) {
+        console.error('Failed to fetch notes counts:', err)
+      } finally {
+        // Remove from loading set
+        setNoteCountsLoading(prev => {
+          const next = new Set(prev)
+          idsToFetch.forEach(id => next.delete(id))
+          return next
+        })
+      }
+    }
+
+    fetchNoteCounts()
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [paginatedSessions.map(s => s.fullId).join(','), loading, decodedOrg, decodedDevice])
 
@@ -578,13 +500,63 @@ export default function SessionsPage({ params }: { params: Promise<{ org: string
     return pages
   }
 
-  const stats = useMemo(() => ({
-    total: sessions.length,
-    complete: sessions.filter((s) => isSessionComplete(s)).length,
-    missingCamera: sessions.filter((s) => !s.hasCameraVideo).length,
-    missingAudio: sessions.filter((s) => !s.hasAudioRaw || !s.hasAudioClean).length,
-    favorites: sessions.filter((s) => s.metadata?.favorite === true).length,
-  }), [sessions])
+  const stats = useMemo(() => {
+    // Helper to check if session is in date range
+    const isInWeek = (session: Session, weekStart: Date, weekEnd: Date) => {
+      const sessionDate = new Date(
+        parseInt(session.year),
+        parseInt(session.month) - 1,
+        parseInt(session.day)
+      )
+      return sessionDate >= weekStart && sessionDate <= weekEnd
+    }
+
+    // Calculate this week's date range (Monday to Sunday)
+    const today = new Date()
+    const dayOfWeek = today.getDay()
+    const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek
+    const thisWeekStart = new Date(today)
+    thisWeekStart.setDate(today.getDate() + mondayOffset)
+    thisWeekStart.setHours(0, 0, 0, 0)
+    const thisWeekEnd = new Date(thisWeekStart)
+    thisWeekEnd.setDate(thisWeekStart.getDate() + 6)
+    thisWeekEnd.setHours(23, 59, 59, 999)
+
+    // Last week's date range
+    const lastWeekStart = new Date(thisWeekStart)
+    lastWeekStart.setDate(lastWeekStart.getDate() - 7)
+    const lastWeekEnd = new Date(thisWeekEnd)
+    lastWeekEnd.setDate(lastWeekEnd.getDate() - 7)
+
+    // Filter sessions by week
+    const thisWeekSessions = sessions.filter(s => isInWeek(s, thisWeekStart, thisWeekEnd))
+    const lastWeekSessions = sessions.filter(s => isInWeek(s, lastWeekStart, lastWeekEnd))
+
+    // Calculate stats for each week
+    const thisWeek = {
+      total: thisWeekSessions.length,
+      complete: thisWeekSessions.filter(s => isSessionComplete(s)).length,
+      missingCamera: thisWeekSessions.filter(s => !s.hasCameraVideo).length,
+      missingAudio: thisWeekSessions.filter(s => !s.hasAudioRaw || !s.hasAudioClean).length,
+    }
+
+    const lastWeek = {
+      total: lastWeekSessions.length,
+      complete: lastWeekSessions.filter(s => isSessionComplete(s)).length,
+      missingCamera: lastWeekSessions.filter(s => !s.hasCameraVideo).length,
+      missingAudio: lastWeekSessions.filter(s => !s.hasAudioRaw || !s.hasAudioClean).length,
+    }
+
+    return {
+      total: sessions.length,
+      complete: sessions.filter((s) => isSessionComplete(s)).length,
+      missingCamera: sessions.filter((s) => !s.hasCameraVideo).length,
+      missingAudio: sessions.filter((s) => !s.hasAudioRaw || !s.hasAudioClean).length,
+      favorites: sessions.filter((s) => s.metadata?.favorite === true).length,
+      thisWeek,
+      lastWeek,
+    }
+  }, [sessions])
 
   if (loading) {
     return (
@@ -599,8 +571,8 @@ export default function SessionsPage({ params }: { params: Promise<{ org: string
       <div className="p-6">
         <Breadcrumb items={[
           { label: 'Organizations', href: '/' },
-          { label: decodedOrg, href: `/${encodeURIComponent(decodedOrg)}` },
-          { label: decodedDevice }
+          { label: orgDisplayName, href: `/${encodeURIComponent(decodedOrg)}` },
+          { label: deviceDisplayName }
         ]} />
         <div className="flex flex-col items-center justify-center h-[calc(100vh-200px)] gap-4">
           <div className="text-red-400">Error: {error}</div>
@@ -619,31 +591,92 @@ export default function SessionsPage({ params }: { params: Promise<{ org: string
     <div className="p-6">
       <Breadcrumb items={[
         { label: 'Organizations', href: '/' },
-        { label: decodedOrg, href: `/${encodeURIComponent(decodedOrg)}` },
-        { label: decodedDevice }
+        { label: orgDisplayName, href: `/${encodeURIComponent(decodedOrg)}` },
+        { label: deviceDisplayName }
       ]} />
+
+      {/* Page Title with IDs shown if we have names */}
+      <div className="mb-6">
+        <h1 className="text-2xl font-bold">{deviceDisplayName}</h1>
+        {(orgName || deviceName) && (
+          <p className="text-xs text-zinc-500 font-mono mt-1">
+            {orgName ? `${decodedOrg} / ` : ''}{deviceName ? decodedDevice : ''}
+          </p>
+        )}
+      </div>
 
       {/* Stats Bar */}
       <div className="grid grid-cols-4 gap-4 mb-6">
         <div className="bg-zinc-900 rounded-lg p-4 border border-zinc-800">
           <div className="text-2xl font-bold">{stats.total}</div>
           <div className="text-sm text-zinc-400">Total Sessions</div>
+          <div className="text-[10px] text-zinc-600 mt-1">
+            This week: {stats.thisWeek.total} · Last: {stats.lastWeek.total}
+          </div>
         </div>
         <div className="bg-zinc-900 rounded-lg p-4 border border-zinc-800">
           <div className="text-2xl font-bold text-emerald-400">{stats.complete}</div>
           <div className="text-sm text-zinc-400">Complete</div>
+          <div className="text-[10px] text-zinc-600 mt-1">
+            This week: {stats.thisWeek.complete} · Last: {stats.lastWeek.complete}
+          </div>
         </div>
         <div className="bg-zinc-900 rounded-lg p-4 border border-zinc-800">
           <div className="text-2xl font-bold text-amber-400">{stats.missingCamera}</div>
           <div className="text-sm text-zinc-400">Missing Camera</div>
+          <div className="text-[10px] text-zinc-600 mt-1">
+            This week: {stats.thisWeek.missingCamera} · Last: {stats.lastWeek.missingCamera}
+          </div>
         </div>
         <div className="bg-zinc-900 rounded-lg p-4 border border-zinc-800">
           <div className="text-2xl font-bold text-red-400">{stats.missingAudio}</div>
           <div className="text-sm text-zinc-400">Missing Audio</div>
+          <div className="text-[10px] text-zinc-600 mt-1">
+            This week: {stats.thisWeek.missingAudio} · Last: {stats.lastWeek.missingAudio}
+          </div>
         </div>
       </div>
 
-      {sessions.length > 0 && <SessionsPerHourChart sessions={sessions} />}
+      {sessions.length > 0 && (
+        <SessionAnalytics
+          sessions={sessions}
+          onDateSelect={setDateFilter}
+          selectedDate={dateFilter}
+        />
+      )}
+
+      {/* Date filter banner */}
+      {dateFilter && (
+        <div className="flex items-center justify-between bg-blue-500/10 border border-blue-500/30 rounded-lg px-4 py-2 mb-4">
+          <div className="flex items-center gap-2 text-sm">
+            <svg className="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
+            </svg>
+            <span className="text-blue-300">
+              Filtering by: <span className="font-medium">{(() => {
+                const [year, month, day] = dateFilter.split('-').map(Number)
+                const date = new Date(year, month - 1, day)
+                return date.toLocaleDateString('en-US', {
+                  weekday: 'short',
+                  month: 'short',
+                  day: 'numeric',
+                  year: 'numeric',
+                })
+              })()}</span>
+            </span>
+            <span className="text-blue-400/60">({filteredSessions.length} session{filteredSessions.length !== 1 ? 's' : ''})</span>
+          </div>
+          <button
+            onClick={() => setDateFilter(null)}
+            className="text-blue-400 hover:text-blue-300 text-sm flex items-center gap-1"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+            Clear filter
+          </button>
+        </div>
+      )}
 
       {/* Filter Tabs */}
       <div className="flex gap-2 mb-4">
@@ -735,11 +768,38 @@ export default function SessionsPage({ params }: { params: Promise<{ org: string
                     <div className="font-mono text-sm text-zinc-300">
                       {session.id}
                     </div>
-                    <div className="text-xs text-zinc-500">
-                      {session.year}-{session.month}-{session.day} {session.time.replace(/-/g, ':')} · {formatBytes(session.totalSize)}
-                      {durations[session.fullId] !== undefined && (
+                    <div className="text-xs text-zinc-500 flex items-center gap-1">
+                      <span>{session.year}-{session.month}-{session.day} {session.time.replace(/-/g, ':')} · {formatBytes(session.totalSize)}</span>
+                      {durations[session.fullId] !== undefined ? (
                         <span className="text-zinc-400"> · {formatDuration(durations[session.fullId])}</span>
-                      )}
+                      ) : session.hasScreenVideo ? (
+                        <span className="text-zinc-600 inline-flex items-center gap-1">
+                          <span> · </span>
+                          <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                          </svg>
+                        </span>
+                      ) : null}
+                      {/* Notes indicator */}
+                      {noteCountsLoading.has(session.fullId) ? (
+                        <span className="text-zinc-600 inline-flex items-center gap-1 ml-1">
+                          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                          </svg>
+                          <svg className="w-2.5 h-2.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                          </svg>
+                        </span>
+                      ) : noteCounts[session.fullId] > 0 ? (
+                        <span className="text-blue-400 inline-flex items-center gap-0.5 ml-1">
+                          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                          </svg>
+                          <span className="text-[10px]">{noteCounts[session.fullId]}</span>
+                        </span>
+                      ) : null}
                     </div>
                   </div>
                 </div>

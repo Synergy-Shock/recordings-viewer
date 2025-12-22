@@ -3,8 +3,13 @@
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
 
+interface OrgWithMetadata {
+  id: string
+  name?: string
+}
+
 export default function OrgsPage() {
-  const [orgs, setOrgs] = useState<string[]>([])
+  const [orgs, setOrgs] = useState<OrgWithMetadata[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -65,8 +70,8 @@ export default function OrgsPage() {
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
         {orgs.map((org) => (
           <Link
-            key={org}
-            href={`/${encodeURIComponent(org)}`}
+            key={org.id}
+            href={`/${encodeURIComponent(org.id)}`}
             className="bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-lg p-6 transition-colors group"
           >
             <div className="flex items-center gap-3">
@@ -75,9 +80,18 @@ export default function OrgsPage() {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
                 </svg>
               </div>
-              <div>
-                <div className="font-medium text-zinc-200">{org}</div>
-                <div className="text-xs text-zinc-500">Click to view devices</div>
+              <div className="min-w-0 flex-1">
+                {org.name ? (
+                  <>
+                    <div className="font-medium text-zinc-200 truncate">{org.name}</div>
+                    <div className="text-xs text-zinc-500 font-mono truncate">{org.id}</div>
+                  </>
+                ) : (
+                  <>
+                    <div className="font-medium text-zinc-200 font-mono truncate">{org.id}</div>
+                    <div className="text-xs text-zinc-500">Click to view devices</div>
+                  </>
+                )}
               </div>
             </div>
           </Link>

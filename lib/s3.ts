@@ -117,6 +117,65 @@ function getFileType(key: string): SessionFile['type'] {
   return 'unknown'
 }
 
+// Org/Device metadata from _metadata.json files
+export interface OrgMetadata {
+  id: string
+  name: string
+  created_at?: string
+}
+
+export interface DeviceMetadata {
+  id: string
+  name: string
+  org_id: string
+  org_name: string
+  created_at?: string
+}
+
+export interface OrgWithMetadata {
+  id: string
+  name?: string
+}
+
+export interface DeviceWithMetadata {
+  id: string
+  name?: string
+}
+
+// Fetch org metadata from {org}/_metadata.json
+export async function getOrgMetadata(org: string): Promise<OrgMetadata | null> {
+  try {
+    const buffer = await getFileBuffer(`${org}/_metadata.json`)
+    const data = JSON.parse(buffer.toString('utf-8'))
+    return {
+      id: data.id || org,
+      name: data.name || null,
+      created_at: data.created_at,
+    }
+  } catch {
+    // File doesn't exist or invalid JSON
+    return null
+  }
+}
+
+// Fetch device metadata from {org}/{device}/_metadata.json
+export async function getDeviceMetadata(org: string, device: string): Promise<DeviceMetadata | null> {
+  try {
+    const buffer = await getFileBuffer(`${org}/${device}/_metadata.json`)
+    const data = JSON.parse(buffer.toString('utf-8'))
+    return {
+      id: data.id || device,
+      name: data.name || null,
+      org_id: data.org_id || org,
+      org_name: data.org_name || null,
+      created_at: data.created_at,
+    }
+  } catch {
+    // File doesn't exist or invalid JSON
+    return null
+  }
+}
+
 // List all organizations in the bucket
 export async function listOrgs(): Promise<string[]> {
   const orgs = new Set<string>()
@@ -143,6 +202,24 @@ export async function listOrgs(): Promise<string[]> {
   } while (continuationToken)
 
   return Array.from(orgs).sort()
+}
+
+// List all organizations with metadata
+export async function listOrgsWithMetadata(): Promise<OrgWithMetadata[]> {
+  const orgIds = await listOrgs()
+
+  // Fetch metadata for all orgs in parallel
+  const orgsWithMetadata = await Promise.all(
+    orgIds.map(async (id) => {
+      const metadata = await getOrgMetadata(id)
+      return {
+        id,
+        name: metadata?.name,
+      }
+    })
+  )
+
+  return orgsWithMetadata
 }
 
 // List all devices for a given organization
@@ -175,6 +252,24 @@ export async function listDevices(org: string): Promise<string[]> {
   } while (continuationToken)
 
   return Array.from(devices).sort()
+}
+
+// List all devices with metadata for a given organization
+export async function listDevicesWithMetadata(org: string): Promise<DeviceWithMetadata[]> {
+  const deviceIds = await listDevices(org)
+
+  // Fetch metadata for all devices in parallel
+  const devicesWithMetadata = await Promise.all(
+    deviceIds.map(async (id) => {
+      const metadata = await getDeviceMetadata(org, id)
+      return {
+        id,
+        name: metadata?.name,
+      }
+    })
+  )
+
+  return devicesWithMetadata
 }
 
 // List sessions for a specific org and device

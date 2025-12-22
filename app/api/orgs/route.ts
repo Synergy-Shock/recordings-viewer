@@ -1,11 +1,11 @@
 import { NextResponse } from 'next/server'
-import { listOrgs } from '@/lib/s3'
+import { listOrgsWithMetadata } from '@/lib/s3'
 
 export const dynamic = 'force-dynamic'
 
 export async function GET() {
   try {
-    const orgs = await listOrgs()
+    const orgs = await listOrgsWithMetadata()
     return NextResponse.json({ orgs })
   } catch (error) {
     console.error('Failed to list orgs:', error)
